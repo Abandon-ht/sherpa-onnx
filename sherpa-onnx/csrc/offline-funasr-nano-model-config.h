@@ -5,11 +5,21 @@
 #ifndef SHERPA_ONNX_CSRC_OFFLINE_FUNASR_NANO_MODEL_CONFIG_H_
 #define SHERPA_ONNX_CSRC_OFFLINE_FUNASR_NANO_MODEL_CONFIG_H_
 
+#include <functional>
 #include <string>
 
 #include "sherpa-onnx/csrc/parse-options.h"
 
 namespace sherpa_onnx {
+
+// Callback for streaming token generation
+// Parameters:
+//   - text: Decoded text chunk from this token
+//   - token_id: The token ID that was generated
+//   - is_final: True if this is the last token
+// Returns: true to continue generation, false to stop early
+using FunASRNanoStreamingCallback =
+    std::function<bool(const std::string &text, int64_t token_id, bool is_final)>;
 
 struct OfflineFunASRNanoModelConfig {
   // Path to encoder_adaptor.onnx
@@ -24,10 +34,10 @@ struct OfflineFunASRNanoModelConfig {
   // Path to tokenizer directory (e.g., Qwen3-0.6B)
   std::string tokenizer;
 
-  // System prompt
+  // System prompt (must match FunASR-nano training format)
   std::string system_prompt = "You are a helpful assistant.";
 
-  // User prompt template (will be filled with audio tokens)
+  // User prompt template (must match FunASR-nano training format)
   std::string user_prompt = "语音转写：";
 
   // Maximum number of new tokens to generate
@@ -38,6 +48,12 @@ struct OfflineFunASRNanoModelConfig {
 
   // Top-p (nucleus) sampling threshold
   float top_p = 0.8f;
+
+  // Repetition penalty (1.0 = no penalty, >1.0 = penalize repeated tokens)
+  float repetition_penalty = 1.2f;
+
+  // N-gram blocking size (0 = disabled, >0 = block repeated n-grams)
+  int32_t no_repeat_ngram_size = 3;
 
   // Random seed for reproducibility
   int32_t seed = 42;

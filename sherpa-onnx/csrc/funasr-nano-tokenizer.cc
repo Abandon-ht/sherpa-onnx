@@ -1286,13 +1286,16 @@ void FunASRNanoTokenizer::FinalizeSpecialIds() {
   pad_token_id_ = TokenToIdOrDefault(token2id_, "<|pad|>", -1);
   if (pad_token_id_ < 0) pad_token_id_ = eos_token_id_;
 
+  im_start_token_id_ = TokenToIdOrDefault(token2id_, "<|im_start|>", -1);
+
   special_ids_.clear();
   special_ids_.insert(static_cast<int32_t>(eos_token_id_));
   special_ids_.insert(static_cast<int32_t>(im_end_token_id_));
   special_ids_.insert(static_cast<int32_t>(pad_token_id_));
 
-  int64_t im_start = TokenToIdOrDefault(token2id_, "<|im_start|>", -1);
-  if (im_start >= 0) special_ids_.insert(static_cast<int32_t>(im_start));
+  if (im_start_token_id_ >= 0) {
+    special_ids_.insert(static_cast<int32_t>(im_start_token_id_));
+  }
 }
 
 static inline bool CheckSingleWordBoundary(const std::string &text, size_t pos,
@@ -1560,6 +1563,96 @@ std::string FunASRNanoTokenizer::Decode(const std::vector<int64_t> &token_ids) {
 
   TrimInPlace(&out);
   return out;
+}
+
+// StreamingDecodeState implementation
+std::string StreamingDecodeState::FlushPendingBytes() {
+  std::string result;
+  if (!pending_bytes_.empty()) {
+    // Convert remaining bytes to replacement characters
+    result.reserve(pending_bytes_.size() * 3);
+    for (size_t i = 0; i < pending_bytes_.size(); ++i) {
+      result.append("\xEF\xBF\xBD");  // U+FFFD replacement character
+    }
+    pending_bytes_.clear();
+  }
+  return result;
+}
+
+// Check if token ID is a special token
+bool FunASRNanoTokenizer::IsSpecialToken(int64_t token_id) const {
+  if (token_id < 0) return false;
+  int32_t id = static_cast<int32_t>(token_id);
+  return special_ids_.count(id) > 0;
+}
+
+// Get raw token string by ID
+std::string FunASRNanoTokenizer::IdToToken(int64_t token_id) const {
+  if (token_id < 0 ||
+      static_cast<size_t>(token_id) >= id2token_.size()) {
+    return "";
+  }
+  return id2token_[static_cast<size_t>(token_id)];
+}
+
+// Streaming decode with state management
+std::string FunASRNanoTokenizer::DecodeTokenStreaming(
+    int64_t token_id, StreamingDecodeState *state) const {
+  if (!state) return "";
+
+  std::string text = GetTokenStringStreaming(token_id, &state->PendingBytes());
+  state->IncrementTokenCount();
+  return text;
+}
+
+// Streaming decode with callback
+std::string FunASRNanoTokenizer::DecodeWithCallback(
+    const std::vector<int64_t> &token_ids,
+    const StreamingTokenCallback &callback) const {
+  if (token_ids.empty()) return "";
+
+  std::string accumulated_text;
+  accumulated_text.reserve(token_ids.size() * 4);  // Estimate average token length
+
+  StreamingDecodeState state;
+  const size_t total_tokens = token_ids.size();
+
+  for (size_t i = 0; i < total_tokens; ++i) {
+    int64_t token_id = token_ids[i];
+
+    // Skip special tokens
+    if (IsSpecialToken(token_id)) continue;
+
+    // Decode this token
+    std::string text = DecodeTokenStreaming(token_id, &state);
+
+    if (!text.empty()) {
+      accumulated_text.append(text);
+
+      // Call callback if provided
+      if (callback) {
+        bool is_final = (i == total_tokens - 1);
+        bool should_continue = callback(text, token_id, is_final);
+        if (!should_continue) {
+          // Early stop requested
+          break;
+        }
+      }
+    }
+  }
+
+  // Flush any remaining pending bytes
+  if (state.HasPendingBytes()) {
+    std::string remaining = state.FlushPendingBytes();
+    if (!remaining.empty()) {
+      accumulated_text.append(remaining);
+      if (callback) {
+        callback(remaining, -1, true);
+      }
+    }
+  }
+
+  return accumulated_text;
 }
 
 }  // namespace sherpa_onnx

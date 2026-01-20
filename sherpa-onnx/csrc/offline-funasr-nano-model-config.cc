@@ -41,6 +41,12 @@ void OfflineFunASRNanoModelConfig::Register(ParseOptions *po) {
   po->Register("funasr-nano-top-p", &top_p,
                "Top-p (nucleus) sampling threshold for FunASR-nano");
 
+  po->Register("funasr-nano-repetition-penalty", &repetition_penalty,
+               "Repetition penalty for FunASR-nano (1.0 = no penalty)");
+
+  po->Register("funasr-nano-no-repeat-ngram-size", &no_repeat_ngram_size,
+               "N-gram blocking size for FunASR-nano (0 = disabled)");
+
   po->Register("funasr-nano-seed", &seed, "Random seed for FunASR-nano");
 }
 
@@ -122,6 +128,20 @@ bool OfflineFunASRNanoModelConfig::Validate() const {
     return false;
   }
 
+  if (repetition_penalty < 1.0f) {
+    SHERPA_ONNX_LOGE(
+        "--funasr-nano-repetition-penalty should be >= 1.0. Given: %f",
+        repetition_penalty);
+    return false;
+  }
+
+  if (no_repeat_ngram_size < 0) {
+    SHERPA_ONNX_LOGE(
+        "--funasr-nano-no-repeat-ngram-size should be >= 0. Given: %d",
+        no_repeat_ngram_size);
+    return false;
+  }
+
   return true;
 }
 
@@ -138,6 +158,8 @@ std::string OfflineFunASRNanoModelConfig::ToString() const {
   os << "max_new_tokens=" << max_new_tokens << ", ";
   os << "temperature=" << temperature << ", ";
   os << "top_p=" << top_p << ", ";
+  os << "repetition_penalty=" << repetition_penalty << ", ";
+  os << "no_repeat_ngram_size=" << no_repeat_ngram_size << ", ";
   os << "seed=" << seed << ")";
 
   return os.str();
