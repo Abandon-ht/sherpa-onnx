@@ -145,3 +145,33 @@ Note: Most examples require downloading models first. Check the source file for 
   cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON ..
   ```
 - Static builds (`BUILD_SHARED_LIBS=OFF`, default) produce standalone binaries but take longer to link
+
+### IMPORTANT: Windows MSVC Static Build Issue
+
+**DO NOT use static onnxruntime on Windows** (`BUILD_SHARED_LIBS=OFF`). The pre-compiled static onnxruntime library has MSVC ABI compatibility issues with newer Visual Studio versions (19.43+). You will get linker errors like:
+```
+error LNK2019: unresolved external symbol __std_find_first_of_trivial_pos_1
+error LNK2019: unresolved external symbol __std_find_first_of_trivial_pos_2
+```
+
+**Solution**: Always use `-DBUILD_SHARED_LIBS=ON` for Windows MSVC builds:
+```bash
+cmake -G "Visual Studio 17 2022" -A x64 -DBUILD_SHARED_LIBS=ON ..
+```
+
+### ccache for Windows MSVC Builds
+ccache is automatically enabled if found. Install ccache to `D:\soft\ccache` or set `CCACHE_DIR` environment variable.
+
+Reference: https://github.com/ccache/ccache/wiki/MS-Visual-Studio
+
+Build with Visual Studio generator:
+```bash
+mkdir build && cd build
+cmake -G "Visual Studio 17 2022" -A x64 ..
+cmake --build . --config Release -j 8
+```
+
+Verify ccache is working:
+```bash
+ccache -s  # Check statistics before/after build
+```

@@ -14,6 +14,9 @@
 #include <utility>
 #include <vector>
 
+#include <cstdlib>  // for srand
+#include <mutex>    // for std::mutex
+
 #include "Eigen/Core"
 #include "kaldi-native-fbank/csrc/online-feature.h"
 #include "sherpa-onnx/csrc/macros.h"
@@ -112,6 +115,14 @@ class OfflineStream::Impl {
   }
 
   void AcceptWaveform(int32_t sampling_rate, const float *waveform, int32_t n) {
+    // Fix for deterministic dither in kaldi-native-fbank.
+    // The Dither() function creates a RandomState that seeds from global rand().
+    // We reset rand() state to ensure reproducible features across calls.
+    // Mutex ensures thread-safety when multiple streams process concurrently.
+    static std::mutex dither_mutex;
+    std::lock_guard<std::mutex> lock(dither_mutex);
+    std::srand(0);
+
     if (config_.normalize_samples) {
       AcceptWaveformImpl(sampling_rate, waveform, n);
     } else {

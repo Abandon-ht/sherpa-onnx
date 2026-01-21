@@ -24,6 +24,36 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
   cmake_policy(SET CMP0135 NEW)
 endif()
 
+# ccache support for MSVC/MSBuild
+# Reference: https://github.com/ccache/ccache/wiki/MS-Visual-Studio
+if(MSVC)
+  # CMP0141: MSVC debug information format flags are selected by CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.25.0")
+    cmake_policy(SET CMP0141 NEW)
+  endif()
+
+  find_program(CCACHE_PROGRAM ccache
+    HINTS
+      "$ENV{CCACHE_DIR}"
+  )
+
+  if(CCACHE_PROGRAM)
+    message(STATUS "Found ccache: ${CCACHE_PROGRAM}")
+    file(COPY_FILE
+      ${CCACHE_PROGRAM} ${CMAKE_BINARY_DIR}/cl.exe
+      ONLY_IF_DIFFERENT)
+
+    # Visual Studio defaults to /Zi which is incompatible with ccache, use /Z7 instead
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+
+    set(CMAKE_VS_GLOBALS
+      "CLToolExe=cl.exe"
+      "CLToolPath=${CMAKE_BINARY_DIR}"
+      "UseMultiToolTask=true"
+    )
+    message(STATUS "ccache enabled for MSVC builds")
+  endif()
+endif()
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(SUGGEST_BUILD_BINARIES ON)

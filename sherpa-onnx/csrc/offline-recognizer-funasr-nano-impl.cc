@@ -98,16 +98,36 @@ std::unique_ptr<OfflineStream> OfflineRecognizerFunASRNanoImpl::CreateStream()
 }
 
 // Initialize feature extraction configuration for FunASR-nano.
-// Sets parameters to match the kaldi-native-fbank defaults used in
-// the FunASR-nano-onnx Python reference implementation.
+// CRITICAL: These parameters MUST match FunASR WavFrontend training defaults
+// to avoid train-test mismatch which can severely degrade ASR accuracy.
+//
+// Reference: FunASR/funasr/frontends/wav_frontend.py
+//   - dither=1.0 (prevents log(0)=-inf in silent segments)
+//   - snip_edges=True (only use complete frames, no zero-padding)
+//   - window="hamming"
+//   - upscale_samples=True (multiply by 32768, equivalent to normalize_samples=false)
+//
+// WARNING: Using different parameters (e.g., dither=0, snip_edges=false)
+// will produce completely wrong transcriptions!
 void OfflineRecognizerFunASRNanoImpl::InitFeatConfig() {
+  // normalize_samples=false means audio is multiplied by 32768 internally,
+  // matching FunASR's upscale_samples=True behavior
   config_.feat_config.normalize_samples = false;
   config_.feat_config.window_type = "hamming";
-  config_.feat_config.snip_edges = false;
-  config_.feat_config.dither = 0.0f;
-  // FunASR-nano uses kaldi-native-fbank defaults:
-  // high_freq = 0 means Nyquist frequency (8000Hz for 16kHz audio)
-  // sherpa-onnx default is -400 (7600Hz), which differs from training
+
+  // CRITICAL: Must match FunASR training defaults exactly!
+  // snip_edges=true: Only use complete frames (no zero-padding at boundaries)
+  // This ensures frame boundaries align exactly with training
+  config_.feat_config.snip_edges = true;
+
+  // CRITICAL: dither=1.0 adds small random noise to prevent log(0)=-inf
+  // in silent audio segments. Without this, silent frames produce -inf values
+  // which propagate through the network and cause completely wrong outputs.
+  // The value 1.0 is for the [-32768, 32768] range (after normalize_samples=false)
+  config_.feat_config.dither = 1.0f;
+
+  // high_freq=0 means Nyquist frequency (8000Hz for 16kHz audio)
+  // This matches FunASR's default behavior
   config_.feat_config.high_freq = 0.0f;
 }
 
