@@ -135,6 +135,14 @@ static OfflineRecognizerConfig GetOfflineConfig(JNIEnv *env, jobject config,
   SHERPA_ONNX_JNI_READ_INT(ans.model_config.whisper.tail_paddings, tailPaddings,
                            whisper_config_cls, whisper_config);
 
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.whisper.enable_token_timestamps,
+                            enableTokenTimestamps, whisper_config_cls,
+                            whisper_config);
+
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.whisper.enable_segment_timestamps,
+                            enableSegmentTimestamps, whisper_config_cls,
+                            whisper_config);
+
   fid = env->GetFieldID(model_config_cls, "fireRedAsr",
                         "Lcom/k2fsa/sherpa/onnx/OfflineFireRedAsrModelConfig;");
   jobject fire_red_asr_config = env->GetObjectField(model_config, fid);
@@ -293,6 +301,15 @@ static OfflineRecognizerConfig GetOfflineConfig(JNIEnv *env, jobject config,
   SHERPA_ONNX_JNI_READ_STRING(ans.model_config.funasr_nano.user_prompt,
                               userPrompt, funasr_nano_config_cls,
                               funasr_nano_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.funasr_nano.language, language,
+                              funasr_nano_config_cls, funasr_nano_config);
+
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model_config.funasr_nano.itn, itn,
+                            funasr_nano_config_cls, funasr_nano_config);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model_config.funasr_nano.hotwords, hotwords,
+                              funasr_nano_config_cls, funasr_nano_config);
 
   SHERPA_ONNX_JNI_READ_INT(ans.model_config.funasr_nano.max_new_tokens,
                            maxNewTokens, funasr_nano_config_cls,

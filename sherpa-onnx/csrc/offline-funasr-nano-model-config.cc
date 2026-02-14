@@ -48,6 +48,15 @@ void OfflineFunASRNanoModelConfig::Register(ParseOptions *po) {
                "N-gram blocking size for FunASR-nano (0 = disabled)");
 
   po->Register("funasr-nano-seed", &seed, "Random seed for FunASR-nano");
+
+  po->Register("funasr-nano-language", &language,
+               "Language for transcription (empty string means None)");
+
+  po->Register("funasr-nano-itn", &itn,
+               "Whether to apply inverse text normalization (default: true)");
+
+  po->Register("funasr-nano-hotwords", &hotwords,
+               "Hotwords (comma-separated, e.g., \"Sherpa,FunASR\")");
 }
 
 bool OfflineFunASRNanoModelConfig::Validate() const {
@@ -160,7 +169,10 @@ std::string OfflineFunASRNanoModelConfig::ToString() const {
   os << "top_p=" << top_p << ", ";
   os << "repetition_penalty=" << repetition_penalty << ", ";
   os << "no_repeat_ngram_size=" << no_repeat_ngram_size << ", ";
-  os << "seed=" << seed << ")";
+  os << "seed=" << seed << ", ";
+  os << "language=\"" << language << "\", ";
+  os << "itn=" << (itn ? "True" : "False") << ", ";
+  os << "hotwords=\"" << hotwords << "\")";
 
   return os.str();
 }

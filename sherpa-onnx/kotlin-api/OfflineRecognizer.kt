@@ -61,6 +61,9 @@ data class OfflineFunAsrNanoModelConfig(
     var temperature: Float = 1e-6f,
     var topP: Float = 0.8f,
     var seed: Int = 42,
+    var language: String = "",
+    var itn: Boolean = true,
+    var hotwords: String = "",
 )
 
 data class OfflineWhisperModelConfig(
@@ -69,6 +72,8 @@ data class OfflineWhisperModelConfig(
     var language: String = "en", // Used with multilingual model
     var task: String = "transcribe", // transcribe or translate
     var tailPaddings: Int = 1000, // Padding added at the end of the samples
+    var enableTokenTimestamps: Boolean = false,
+    var enableSegmentTimestamps: Boolean = false,
 )
 
 data class OfflineCanaryModelConfig(
@@ -776,6 +781,39 @@ fun getOfflineModelConfig(type: Int): OfflineModelConfig? {
                     tokenizer = "$modelDir/Qwen3-0.6B",
                 ),
                 tokens = "",
+            )
+        }
+
+        47 -> {
+            val modelDir = "sherpa-onnx-wenetspeech-wu-u2pp-conformer-ctc-zh-int8-2026-02-03"
+            return OfflineModelConfig(
+                wenetCtc = OfflineWenetCtcModelConfig(
+                    model = "$modelDir/model.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        48 -> {
+            val modelDir = "sherpa-onnx-wenetspeech-wu-u2pp-conformer-ctc-zh-2026-02-03"
+            return OfflineModelConfig(
+                wenetCtc = OfflineWenetCtcModelConfig(
+                    model = "$modelDir/model.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+            )
+        }
+
+        49 -> {
+            val modelDir = "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09"
+            return OfflineModelConfig(
+                transducer = OfflineTransducerModelConfig(
+                    encoder = "$modelDir/encoder.int8.onnx",
+                    decoder = "$modelDir/decoder.onnx",
+                    joiner = "$modelDir/joiner.int8.onnx",
+                ),
+                tokens = "$modelDir/tokens.txt",
+                modelType = "transducer",
             )
         }
 
