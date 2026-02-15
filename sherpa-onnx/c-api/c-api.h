@@ -1141,6 +1141,19 @@ SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsPocketModelConfig {
   const char *token_scores_json;
 } SherpaOnnxOfflineTtsPocketModelConfig;
 
+SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsQwen3ModelConfig {
+  const char *text_project;
+  const char *codec_embed;
+  const char *code_predictor_embed;
+  const char *code_predictor;
+  const char *talker_prefill;
+  const char *talker_decode;
+  const char *speaker_encoder;
+  const char *tokenizer12hz_encode;
+  const char *tokenizer12hz_decode;
+  const char *tokenizer_dir;
+} SherpaOnnxOfflineTtsQwen3ModelConfig;
+
 SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsModelConfig {
   SherpaOnnxOfflineTtsVitsModelConfig vits;
   int32_t num_threads;
@@ -1151,6 +1164,7 @@ SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsModelConfig {
   SherpaOnnxOfflineTtsKittenModelConfig kitten;
   SherpaOnnxOfflineTtsZipvoiceModelConfig zipvoice;
   SherpaOnnxOfflineTtsPocketModelConfig pocket;
+  SherpaOnnxOfflineTtsQwen3ModelConfig qwen3;
 } SherpaOnnxOfflineTtsModelConfig;
 
 SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsConfig {

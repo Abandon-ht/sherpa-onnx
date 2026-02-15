@@ -474,6 +474,19 @@ struct OfflineTtsPocketModelConfig {
   std::string token_scores_json;
 };
 
+struct OfflineTtsQwen3ModelConfig {
+  std::string text_project;
+  std::string codec_embed;
+  std::string code_predictor_embed;
+  std::string code_predictor;
+  std::string talker_prefill;
+  std::string talker_decode;
+  std::string speaker_encoder;
+  std::string tokenizer12hz_encode;
+  std::string tokenizer12hz_decode;
+  std::string tokenizer_dir;
+};
+
 struct OfflineTtsModelConfig {
   OfflineTtsVitsModelConfig vits;
   OfflineTtsMatchaModelConfig matcha;
@@ -481,6 +494,7 @@ struct OfflineTtsModelConfig {
   OfflineTtsKittenModelConfig kitten;
   OfflineTtsZipvoiceModelConfig zipvoice;
   OfflineTtsPocketModelConfig pocket;
+  OfflineTtsQwen3ModelConfig qwen3;
 
   int32_t num_threads = 1;
   bool debug = false;
