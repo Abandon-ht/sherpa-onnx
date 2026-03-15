@@ -503,6 +503,7 @@ struct OfflineTtsQwen3ModelConfig {
   std::string speaker_encoder;
   std::string tokenizer12hz_encode;
   std::string tokenizer12hz_decode;
+  std::string tokenizer12hz_decode_stream;
   std::string tokenizer_dir;
 };
 

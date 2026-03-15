@@ -38,8 +38,16 @@ struct OfflineTtsQwen3ModelConfig {
   // Path to the tokenizer12hz_encode ONNX model (audio -> codec tokens)
   std::string tokenizer12hz_encode;
 
-  // Path to the tokenizer12hz_decode ONNX model (codec tokens -> audio)
+  // Path to the tokenizer12hz_decode ONNX model (codec tokens -> audio, batch)
   std::string tokenizer12hz_decode;
+
+  // Path to the streaming-optimized tokenizer12hz_decode model.
+  // Exported with a small fixed max_codes_length (e.g. 25 frames = 2 s).
+  // When set, used for per-chunk decode in streaming mode so that each
+  // decode call costs ~chunk_frames/1024 × batch_decode_time instead of
+  // the full batch cost, enabling real-time first-chunk delivery.
+  // Optional: if empty, batch decoder is used for all modes.
+  std::string tokenizer12hz_decode_stream;
 
   // Directory containing tokenizer files (vocab.json, merges.txt, etc.)
   std::string tokenizer_dir;

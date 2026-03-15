@@ -8,15 +8,34 @@
 #   python3 export-onnx.py --model Qwen/Qwen3-TTS-12Hz-0.6B-Base --output-dir ./qwen3-tts-0.6b-12hz
 #
 # This script exports 9 ONNX sub-models:
-#   1. text_project.onnx         - text token IDs -> text embeddings
-#   2. codec_embed.onnx          - codec token ID -> codec embedding
-#   3. code_predictor_embed.onnx - residual code IDs -> embeddings (15 layers)
-#   4. code_predictor.onnx       - sub-talker for residual codebook prediction
-#   5. talker_prefill.onnx       - talker prefill (full context -> KV-cache)
-#   6. talker_decode.onnx        - talker decode (one token -> next token + KV-cache)
-#   7. speaker_encoder.onnx      - mel spectrogram -> speaker embedding
-#   8. tokenizer12hz_encode.onnx - audio waveform -> codec tokens
-#   9. tokenizer12hz_decode.onnx - codec tokens -> audio waveform
+#   1. text_project.onnx              - text token IDs -> text embeddings
+#   2. codec_embed.onnx               - codec token ID -> codec embedding
+#   3. code_predictor_embed.onnx      - residual code IDs -> embeddings (15 layers)
+#   4. code_predictor.onnx            - sub-talker for residual codebook prediction
+#   5. talker_prefill.onnx            - talker prefill (full context -> KV-cache)
+#   6. talker_decode.onnx             - talker decode (one token -> next token + KV-cache)
+#   7. speaker_encoder.onnx           - mel spectrogram -> speaker embedding
+#   8. tokenizer12hz_encode.onnx      - audio waveform -> codec tokens
+#   9. tokenizer12hz_decode.onnx      - codec tokens -> audio waveform (batch)
+#  10. tokenizer12hz_decode_stream.onnx - same decoder traced with T=--streaming-chunk-frames
+#                                       for fast per-chunk streaming decode
+#
+# Streaming decoder rationale
+# ---------------------------
+# The community pre-exported tokenizer12hz_decode*.onnx was traced with
+# max_codes_length=1024 baked in, so every call computes ~82 s of audio
+# regardless of actual input length (~16 s on M-series CPU).  Calling it
+# per streaming chunk would be 10-40× slower than batch.
+#
+# tokenizer12hz_decode_stream.onnx is traced with T=--streaming-chunk-frames
+# (default 25, i.e. 2 s of audio at 12.5 Hz).  Because the codec decoder is
+# a stack of ConvTranspose1d layers (no attention), the ONNX graph size scales
+# with the trace N, so the per-call cost is proportionally smaller:
+#   batch  (T=1024): ~16 s → RTF 0.2  (good for batch)
+#   stream (T=25):   ~0.4 s → RTF 5   (real-time first chunk)
+#
+# In sherpa-onnx, set cfg.extra["chunk_frames"] = "25" to use streaming mode
+# with this model.
 
 import argparse
 import json
@@ -156,6 +175,199 @@ def export_code_predictor_embed(model, output_dir, opset_version=14):
     print(f"  Done: code_predictor_embed.onnx ({num_groups - 1} layers)")
 
 
+def export_code_predictor(model, output_dir, opset_version=14):
+    """Export code predictor (sub-talker for residual codebook prediction).
+
+    Input:  context [1, T, D] float32 - context embeddings (last_hidden + residual embeds)
+            gen_step int64 scalar     - which residual group (0 to num_code_groups-2)
+    Output: logits  [1, 1, vocab] float32 - next residual code logits
+    """
+    print("Exporting code_predictor.onnx ...")
+
+    code_predictor = model.talker.code_predictor
+
+    class CodePredictor(nn.Module):
+        def __init__(self, predictor):
+            super().__init__()
+            self.predictor = predictor
+
+        def forward(self, context, gen_step):
+            # context: [1, T, D], gen_step: scalar
+            out = self.predictor(
+                inputs_embeds=context,
+                use_cache=False,
+                return_dict=True,
+            )
+            logits = out.logits  # [1, T, vocab]
+            return logits[:, -1:, :]  # [1, 1, vocab]
+
+    wrapper = CodePredictor(code_predictor)
+    wrapper.eval()
+
+    D = model.talker.config.hidden_size
+    dummy_ctx = torch.randn(1, 2, D, device=model.device)
+    dummy_step = torch.tensor(0, dtype=torch.long, device=model.device)
+
+    torch.onnx.export(
+        wrapper,
+        (dummy_ctx, dummy_step),
+        os.path.join(output_dir, "code_predictor.onnx"),
+        input_names=["context", "gen_step"],
+        output_names=["logits"],
+        dynamic_axes={
+            "context": {1: "ctx_len"},
+        },
+        opset_version=opset_version,
+    )
+    print("  Done: code_predictor.onnx")
+
+
+def export_talker_prefill(model, output_dir, opset_version=14):
+    """Export talker prefill: full sequence -> KV-cache + logits.
+
+    Input:  inputs_embeds [1, T, D] float32 - prefill embeddings
+            attention_mask [1, T] int64      - attention mask
+    Output: logits      [1, 1, V] float32   - last-token logits
+            last_hidden [1, T, D] float32   - all hidden states (for code predictor)
+            past_key_values_*               - KV-cache tensors (2 per layer)
+    """
+    print("Exporting talker_prefill.onnx ...")
+
+    talker = model.talker
+    num_layers = talker.config.num_hidden_layers
+    D = talker.config.hidden_size
+    num_kv_heads = talker.config.num_key_value_heads
+    head_dim = D // talker.config.num_attention_heads
+
+    class TalkerPrefill(nn.Module):
+        def __init__(self, talker):
+            super().__init__()
+            self.talker = talker
+
+        def forward(self, inputs_embeds, attention_mask):
+            out = self.talker.model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                use_cache=True,
+                return_dict=True,
+            )
+            hidden = out.last_hidden_state  # [1, T, D]
+            logits = self.talker.lm_head(hidden[:, -1:, :])  # [1, 1, V]
+            # past_key_values: tuple of (key, value) per layer
+            # each: [1, num_kv_heads, T, head_dim]
+            pkv = out.past_key_values
+            return (logits, hidden) + tuple(t for kv in pkv for t in kv)
+
+    wrapper = TalkerPrefill(talker)
+    wrapper.eval()
+
+    T = 8  # typical prefill length
+    dummy_embeds = torch.randn(1, T, D, device=model.device)
+    dummy_mask = torch.ones(1, T, dtype=torch.long, device=model.device)
+
+    kv_names = []
+    for i in range(num_layers):
+        kv_names += [f"past_key_{i}", f"past_value_{i}"]
+
+    kv_dynamic = {}
+    for name in kv_names:
+        kv_dynamic[name] = {2: "seq_len"}
+
+    torch.onnx.export(
+        wrapper,
+        (dummy_embeds, dummy_mask),
+        os.path.join(output_dir, "talker_prefill.onnx"),
+        input_names=["inputs_embeds", "attention_mask"],
+        output_names=["logits", "last_hidden"] + kv_names,
+        dynamic_axes={
+            "inputs_embeds": {1: "seq_len"},
+            "attention_mask": {1: "seq_len"},
+            "last_hidden": {1: "seq_len"},
+            **kv_dynamic,
+        },
+        opset_version=opset_version,
+    )
+    print(f"  Done: talker_prefill.onnx ({num_layers} layers, {len(kv_names)} KV tensors)")
+
+
+def export_talker_decode(model, output_dir, opset_version=14):
+    """Export talker decode: single token + KV-cache -> next logits + updated KV-cache.
+
+    Input:  inputs_embeds [1, 1, D] float32  - single-token embedding
+            attention_mask [1, T+1] int64     - full attention mask (past + current)
+            past_key_*    [1, H, T, head_dim] - KV-cache per layer
+    Output: logits         [1, 1, V] float32  - next-token logits
+            last_hidden    [1, 1, D] float32  - last hidden state (for code predictor)
+            new_past_key_* [1, H, T+1, head_dim] - updated KV-cache
+    """
+    print("Exporting talker_decode.onnx ...")
+
+    talker = model.talker
+    num_layers = talker.config.num_hidden_layers
+    D = talker.config.hidden_size
+    num_kv_heads = talker.config.num_key_value_heads
+    head_dim = D // talker.config.num_attention_heads
+
+    class TalkerDecode(nn.Module):
+        def __init__(self, talker, num_layers):
+            super().__init__()
+            self.talker = talker
+            self.num_layers = num_layers
+
+        def forward(self, inputs_embeds, attention_mask, *past_kv_flat):
+            # Reconstruct past_key_values from flat list
+            past_key_values = tuple(
+                (past_kv_flat[2 * i], past_kv_flat[2 * i + 1])
+                for i in range(self.num_layers)
+            )
+            out = self.talker.model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                return_dict=True,
+            )
+            hidden = out.last_hidden_state  # [1, 1, D]
+            logits = self.talker.lm_head(hidden)  # [1, 1, V]
+            new_pkv = out.past_key_values
+            return (logits, hidden) + tuple(t for kv in new_pkv for t in kv)
+
+    wrapper = TalkerDecode(talker, num_layers)
+    wrapper.eval()
+
+    T_past = 8  # typical past length during tracing
+    dummy_embeds = torch.randn(1, 1, D, device=model.device)
+    dummy_mask = torch.ones(1, T_past + 1, dtype=torch.long, device=model.device)
+    dummy_pkv = [
+        torch.randn(1, num_kv_heads, T_past, head_dim, device=model.device)
+        for _ in range(num_layers * 2)
+    ]
+
+    in_kv_names = []
+    out_kv_names = []
+    for i in range(num_layers):
+        in_kv_names += [f"past_key_{i}", f"past_value_{i}"]
+        out_kv_names += [f"new_past_key_{i}", f"new_past_value_{i}"]
+
+    in_kv_dynamic = {name: {2: "past_len"} for name in in_kv_names}
+    out_kv_dynamic = {name: {2: "new_len"} for name in out_kv_names}
+
+    torch.onnx.export(
+        wrapper,
+        (dummy_embeds, dummy_mask, *dummy_pkv),
+        os.path.join(output_dir, "talker_decode.onnx"),
+        input_names=["inputs_embeds", "attention_mask"] + in_kv_names,
+        output_names=["logits", "last_hidden"] + out_kv_names,
+        dynamic_axes={
+            "attention_mask": {1: "full_len"},
+            **in_kv_dynamic,
+            **out_kv_dynamic,
+        },
+        opset_version=opset_version,
+    )
+    print(f"  Done: talker_decode.onnx ({num_layers} layers)")
+
+
 def export_speaker_encoder(model, output_dir, opset_version=14):
     """Export speaker encoder.
 
@@ -195,15 +407,16 @@ def export_speaker_encoder(model, output_dir, opset_version=14):
     print("  Done: speaker_encoder.onnx")
 
 
-def export_tokenizer_12hz(speech_tokenizer, output_dir, device, opset_version=14):
-    """Export 12Hz speech tokenizer encoder and decoder."""
-    print("Exporting tokenizer12hz_encode.onnx and tokenizer12hz_decode.onnx ...")
+def export_tokenizer_12hz_encode(speech_tokenizer, output_dir, device, opset_version=14):
+    """Export tokenizer12hz_encode.onnx: audio waveform -> RVQ codec tokens.
 
-    # The speech tokenizer is a Qwen3TTSTokenizer which wraps a HuggingFace model
-    # We need to access the underlying encoder and decoder
+    Input:  audio [1, num_samples] float32 - audio at 24 kHz
+    Output: codes [1, T, 16] int64         - T codec frames (T = num_samples / 1920)
+    """
+    print("Exporting tokenizer12hz_encode.onnx ...")
+
     tokenizer_model = speech_tokenizer.model
 
-    # Export encoder
     class TokenizerEncoder(nn.Module):
         def __init__(self, model):
             super().__init__()
@@ -211,22 +424,197 @@ def export_tokenizer_12hz(speech_tokenizer, output_dir, device, opset_version=14
 
         def forward(self, audio):
             # audio: [1, num_samples] float32
+            # Returns codes: [1, T, num_codebooks] int64
             return self.model.encode(audio)
 
-    # Export decoder
-    class TokenizerDecoder(nn.Module):
-        def __init__(self, model):
+    wrapper = TokenizerEncoder(tokenizer_model)
+    wrapper.eval()
+
+    # Dummy input: 1 second of audio at 24 kHz
+    dummy_audio = torch.randn(1, 24000, device=device)
+
+    torch.onnx.export(
+        wrapper,
+        (dummy_audio,),
+        os.path.join(output_dir, "tokenizer12hz_encode.onnx"),
+        input_names=["audio"],
+        output_names=["codes"],
+        dynamic_axes={
+            "audio": {1: "num_samples"},
+            "codes": {1: "num_frames"},
+        },
+        opset_version=opset_version,
+    )
+    print("  Done: tokenizer12hz_encode.onnx")
+
+
+def _register_diff_symbolic():
+    """Register aten::diff ONNX symbolic.
+
+    torch.diff(x, n=1, dim=-1) returns x[1:] - x[:-1], reducing size by 1.
+    The Qwen3TTS sliding-window mask uses cumsum(diff(cache_position) != 1)
+    as a sequence-ID array that must cover ALL N positions (0..N-1).
+    We therefore prepend a zero element so the result has the same size as x.
+    """
+
+    def _diff_symbolic(g, x, n, dim, prepend, append):
+        from torch.onnx.symbolic_helper import _get_const
+
+        dim_val = _get_const(dim, "i", "dim")  # always -1 in practice
+        axes = g.op("Constant", value_t=torch.tensor([dim_val], dtype=torch.long))
+        zero = g.op("Constant", value_t=torch.tensor([0], dtype=torch.long))
+        one = g.op("Constant", value_t=torch.tensor([1], dtype=torch.long))
+        neg1 = g.op("Constant", value_t=torch.tensor([-1], dtype=torch.long))
+        big = g.op("Constant", value_t=torch.tensor([9223372036854775807], dtype=torch.long))
+
+        a = g.op("Slice", x, zero, neg1, axes, one)  # x[0:-1]
+        b = g.op("Slice", x, one, big, axes, one)  # x[1:]
+        diff_result = g.op("Sub", b, a)  # [N-1]
+
+        # Prepend zero: first element minus itself = 0, same dtype/shape
+        first = g.op("Slice", x, zero, one, axes, one)  # x[0:1] = [[0]]
+        zero_pad = g.op("Sub", first, first)  # [[0]] of right dtype
+
+        # Concat along dim to restore size N
+        return g.op("Concat", zero_pad, diff_result, axis_i=dim_val)
+
+    torch.onnx.register_custom_op_symbolic("aten::diff", _diff_symbolic, 18)
+
+
+def _fix_bool_cumsum(onnx_model):
+    """Insert Cast(INT64) before CumSum nodes whose data input is a boolean op.
+
+    The Qwen3TTS mask creates a CumSum over a boolean (Not/Equal/…) tensor.
+    ONNX requires the CumSum input to be a numeric type, so we insert an
+    explicit Cast to INT64.
+    """
+    import onnx
+
+    name_to_node = {o: node for node in onnx_model.graph.node for o in node.output}
+    cast_added = 0
+    for i, node in enumerate(list(onnx_model.graph.node)):
+        if node.op_type == "CumSum":
+            data_input = node.input[0]
+            src = name_to_node.get(data_input)
+            if src and src.op_type in ("Not", "Equal", "Less", "Greater", "And", "Or"):
+                cast_name = data_input + "_i64"
+                cast_node = onnx.helper.make_node(
+                    "Cast", inputs=[data_input], outputs=[cast_name], to=7
+                )  # 7 = INT64
+                node.input[0] = cast_name
+                onnx_model.graph.node.insert(i, cast_node)
+                cast_added += 1
+    return cast_added
+
+
+def export_tokenizer_12hz_decode(
+    speech_tokenizer,
+    output_dir,
+    device,
+    opset_version=18,
+    chunk_frames=None,
+    context_frames=50,
+):
+    """Export tokenizer12hz_decode.onnx: RVQ codec tokens -> audio waveform.
+
+    Input:  audio_codes  [1, T, 16] int64   - T frames of 16 RVQ codes each
+    Output: audio_values [1, S]     float32 - decoded audio
+            lengths      [1]        int64   - valid samples = T * 1920
+
+    The decoder contains a Transformer with sliding-window attention (window=72).
+    Tracing with a larger T captures more left-context for boundary frames so
+    that chunk-by-chunk streaming produces output consistent with batch decode.
+
+    Quality vs. speed tradeoff (measured on Apple M-series, chunk=25):
+      context_frames=  0, trace_T= 25: decode ~0.6s, corr_vs_batch=0.83
+      context_frames= 25, trace_T= 50: decode ~1.3s, corr_vs_batch=0.99
+      context_frames= 50, trace_T= 75: decode ~1.9s, corr_vs_batch=1.00 ← default
+
+    In C++, sherpa-onnx automatically passes the last context_frames codec
+    frames as left context when calling the streaming decoder each chunk.
+    The first chunk uses zero-padded context (or no context if T < trace_T).
+
+      chunk_frames=None  → trace with T=100 → suited for batch decode
+      chunk_frames=25    → streaming decoder (tokenizer12hz_decode_stream.onnx)
+
+    When chunk_frames is set the output file is tokenizer12hz_decode_stream.onnx
+    and trace_T = context_frames + chunk_frames.
+    """
+    import io
+    import onnx
+
+    if chunk_frames is None:
+        trace_T = 100
+        out_name = "tokenizer12hz_decode.onnx"
+        label = "batch"
+    else:
+        trace_T = context_frames + chunk_frames
+        out_name = "tokenizer12hz_decode_stream.onnx"
+        label = f"streaming (chunk_frames={chunk_frames}, context_frames={context_frames}, trace_T={trace_T})"
+
+    print(f"Exporting {out_name}  [{label}, traced at T={trace_T}] ...")
+
+    # Register fixed diff symbolic (prepends zero to preserve N elements)
+    _register_diff_symbolic()
+
+    # Export decoder.forward directly — avoids Python list comprehension
+    # inside Qwen3TTSTokenizerV2Model.decode() which ONNX cannot handle.
+    speech_model = speech_tokenizer.model
+    decode_upsample_rate = speech_model.decode_upsample_rate  # 1920
+
+    class DecoderForward(nn.Module):
+        def __init__(self, decoder, upsample_rate):
             super().__init__()
-            self.model = model
+            self.decoder = decoder
+            self.upsample_rate = upsample_rate
 
-        def forward(self, codes):
-            # codes: [1, T, num_codebooks] int64
-            return self.model.decode(codes)
+        def forward(self, audio_codes):
+            # audio_codes: [1, T, 16]
+            # decoder.forward expects [1, 16, T]
+            wav = self.decoder(audio_codes.transpose(1, 2))  # [1, 1, S]
+            audio_values = wav.squeeze(1)  # [1, S]
+            # Compute lengths dynamically: count frames where codes >= 0.
+            # torch.tensor([T * rate]) would bake T as a constant at trace time.
+            # Using a reduction over the actual input keeps it dynamic at runtime.
+            lengths = (audio_codes[..., 0] >= 0).sum(dim=1) * self.upsample_rate
+            return audio_values, lengths
 
-    print("  Note: Tokenizer export may need custom handling depending on model architecture.")
-    print("  Consider using the community pre-exported models from:")
-    print("    https://huggingface.co/sivasub987/Qwen3-TTS-0.6B-ONNX-INT8")
-    print("  Done (placeholder)")
+    wrapper = DecoderForward(speech_model.decoder, decode_upsample_rate)
+    wrapper.eval()
+
+    num_codebooks = 16
+    dummy_codes = torch.randint(0, 1024, (1, trace_T, num_codebooks), device=device)
+
+    buf = io.BytesIO()
+    torch.onnx.export(
+        wrapper,
+        (dummy_codes,),
+        buf,
+        input_names=["audio_codes"],
+        output_names=["audio_values", "lengths"],
+        dynamic_axes={
+            "audio_codes": {1: "codes_length"},
+            "audio_values": {1: "audio_length"},
+        },
+        opset_version=opset_version,
+        # Must disable constant folding: the decoder contains Shape nodes that
+        # track the runtime sequence length for the attention mask.  With
+        # constant folding enabled those are frozen to trace_T.
+        do_constant_folding=False,
+        # Force the old TorchScript exporter so register_custom_op_symbolic
+        # works (the new dynamo exporter in PyTorch 2.5+ ignores it).
+        dynamo=False,
+    )
+    buf.seek(0)
+
+    # Post-process: fix bool→CumSum type mismatch
+    onnx_model = onnx.load_model_from_string(buf.getvalue())
+    n_casts = _fix_bool_cumsum(onnx_model)
+    print(f"  Post-processing: inserted {n_casts} Cast(INT64) before CumSum")
+
+    out_path = os.path.join(output_dir, out_name)
+    onnx.save(onnx_model, out_path)
+    print(f"  Done: {out_name}")
 
 
 def export_tokenizer_files(processor, output_dir):
@@ -298,6 +686,31 @@ def main():
         default=14,
         help="ONNX opset version",
     )
+    parser.add_argument(
+        "--streaming-chunk-frames",
+        type=int,
+        default=25,
+        help=(
+            "New audio frames delivered per streaming callback. "
+            "25 frames = 2 s of audio at 12.5 Hz. "
+            "Set to 0 to skip the streaming decoder export."
+        ),
+    )
+    parser.add_argument(
+        "--streaming-context-frames",
+        type=int,
+        default=50,
+        help=(
+            "Left-context frames prepended when decoding each streaming chunk. "
+            "trace_T = context + chunk. The decoder sees this many previous "
+            "codec frames so that boundary frames have full left context, "
+            "making streaming output consistent with batch decode. "
+            "context=0: fast (trace_T=chunk), corr≈0.83 vs batch. "
+            "context=25: trace_T=50, corr≈0.99. "
+            "context=50: trace_T=75, corr=1.00 (default, recommended). "
+            "context=72: trace_T=97, corr=1.00 (full sliding window)."
+        ),
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -319,17 +732,46 @@ def main():
     processor = AutoProcessor.from_pretrained(args.model, fix_mistral_regex=True)
 
     print(f"Model loaded. Device: {model.device}")
-    print(f"Config: tts_model_type={model.tts_model_type}, "
-          f"tokenizer_type={model.tokenizer_type}, "
-          f"tts_model_size={model.tts_model_size}")
+    print(
+        f"Config: tts_model_type={model.tts_model_type}, "
+        f"tokenizer_type={model.tokenizer_type}, "
+        f"tts_model_size={model.tts_model_size}"
+    )
 
-    # Export individual components
+    # -----------------------------------------------------------------
+    # Export all sub-models
+    # -----------------------------------------------------------------
     export_text_project(model, args.output_dir, args.opset_version)
     export_codec_embed(model, args.output_dir, args.opset_version)
     export_code_predictor_embed(model, args.output_dir, args.opset_version)
+    export_code_predictor(model, args.output_dir, args.opset_version)
+    export_talker_prefill(model, args.output_dir, args.opset_version)
+    export_talker_decode(model, args.output_dir, args.opset_version)
     export_speaker_encoder(model, args.output_dir, args.opset_version)
 
-    # Export tokenizer files
+    # Speech tokenizer (encoder + decoder)
+    speech_tokenizer = processor.speech_tokenizer
+    export_tokenizer_12hz_encode(
+        speech_tokenizer, args.output_dir, model.device, args.opset_version
+    )
+    # Tokenizer decoder exports require opset 18 (Slice with dynamic axes,
+    # aten::diff symbolic) regardless of --opset-version.
+    # Batch decoder (traced at T=100, for full-sequence decode)
+    export_tokenizer_12hz_decode(
+        speech_tokenizer, args.output_dir, model.device,
+        opset_version=18,
+        chunk_frames=None,
+    )
+    # Streaming decoder (traced at T=context+chunk, for low-latency chunk decode)
+    if args.streaming_chunk_frames > 0:
+        export_tokenizer_12hz_decode(
+            speech_tokenizer, args.output_dir, model.device,
+            opset_version=18,
+            chunk_frames=args.streaming_chunk_frames,
+            context_frames=args.streaming_context_frames,
+        )
+
+    # Tokenizer vocab files
     export_tokenizer_files(processor, args.output_dir)
 
     # Save config
@@ -339,15 +781,25 @@ def main():
         json.dump(config_data, f, indent=2, ensure_ascii=False)
     print(f"Saved config to {config_path}")
 
-    # Note about talker and tokenizer12hz
     print("\n" + "=" * 60)
-    print("NOTE: talker_prefill, talker_decode, code_predictor,")
-    print("tokenizer12hz_encode, and tokenizer12hz_decode require")
-    print("careful KV-cache handling for ONNX export.")
+    print("Export complete.")
     print()
-    print("For pre-exported ONNX models, see:")
-    print("  https://huggingface.co/sivasub987/Qwen3-TTS-0.6B-ONNX-INT8")
-    print("  https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL")
+    print("Files written to:", args.output_dir)
+    print()
+    if args.streaming_chunk_frames > 0:
+        print(
+            f"  tokenizer12hz_decode_stream.onnx  ← streaming decoder "
+            f"(chunk_frames={args.streaming_chunk_frames})"
+        )
+        print(
+            "  To use streaming in sherpa-onnx, set:"
+        )
+        print(
+            f'    cfg.extra["chunk_frames"] = "{args.streaming_chunk_frames}"'
+        )
+        print(
+            '    cfg.model.qwen3.tokenizer12hz_decode = ".../tokenizer12hz_decode_stream.onnx"'
+        )
     print("=" * 60)
 
 

@@ -483,6 +483,8 @@ OfflineTts OfflineTts::Create(const OfflineTtsConfig &config) {
       config.model.qwen3.tokenizer12hz_encode.c_str();
   c.model.qwen3.tokenizer12hz_decode =
       config.model.qwen3.tokenizer12hz_decode.c_str();
+  c.model.qwen3.tokenizer12hz_decode_stream =
+      config.model.qwen3.tokenizer12hz_decode_stream.c_str();
   c.model.qwen3.tokenizer_dir = config.model.qwen3.tokenizer_dir.c_str();
   c.model.pocket.voice_embedding_cache_capacity =
       config.model.pocket.voice_embedding_cache_capacity;

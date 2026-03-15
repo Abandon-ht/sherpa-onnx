@@ -111,6 +111,30 @@ class OfflineTtsQwen3Model::Impl {
     return result;
   }
 
+  // Uses the streaming-optimized session if loaded, otherwise falls back
+  // to the batch decoder.  Call this for per-chunk decode in streaming mode.
+  Tokenizer12hzDecodeResult RunTokenizer12hzDecodeStream(
+      Ort::Value audio_codes) const {
+    if (tokenizer12hz_decode_stream_sess_) {
+      auto out = tokenizer12hz_decode_stream_sess_->Run(
+          {}, tokenizer12hz_decode_stream_input_names_ptr_.data(), &audio_codes,
+          1, tokenizer12hz_decode_stream_output_names_ptr_.data(),
+          tokenizer12hz_decode_stream_output_names_ptr_.size());
+      Tokenizer12hzDecodeResult result;
+      result.audio_values = std::move(out[0]);
+      if (out.size() > 1) {
+        result.lengths = std::move(out[1]);
+      }
+      return result;
+    }
+    // Fallback: use batch decoder
+    return RunTokenizer12hzDecode(std::move(audio_codes));
+  }
+
+  bool HasTokenizer12hzDecodeStream() const {
+    return tokenizer12hz_decode_stream_sess_ != nullptr;
+  }
+
   TalkerPrefillResult RunTalkerPrefill(Ort::Value inputs_embeds,
                                        Ort::Value attention_mask) const {
     std::array<Ort::Value, 2> inputs = {std::move(inputs_embeds),
@@ -177,6 +201,11 @@ class OfflineTtsQwen3Model::Impl {
     }
 
     InitTokenizer12hzDecode(config_.qwen3.tokenizer12hz_decode);
+
+    if (!config_.qwen3.tokenizer12hz_decode_stream.empty()) {
+      InitTokenizer12hzDecodeStream(
+          config_.qwen3.tokenizer12hz_decode_stream);
+    }
 
     // Try to load config.json from the model directory
     LoadConfigJson();
@@ -342,6 +371,14 @@ class OfflineTtsQwen3Model::Impl {
                 tokenizer12hz_decode_output_names_ptr_);
   }
 
+  void InitTokenizer12hzDecodeStream(const std::string &path) {
+    InitSession(path, tokenizer12hz_decode_stream_sess_,
+                tokenizer12hz_decode_stream_input_names_,
+                tokenizer12hz_decode_stream_input_names_ptr_,
+                tokenizer12hz_decode_stream_output_names_,
+                tokenizer12hz_decode_stream_output_names_ptr_);
+  }
+
  private:
   OfflineTtsModelConfig config_;
   Qwen3TtsConfig tts_config_;
@@ -358,6 +395,8 @@ class OfflineTtsQwen3Model::Impl {
   std::unique_ptr<Ort::Session> talker_decode_sess_;
   std::unique_ptr<Ort::Session> speaker_encoder_sess_;
   std::unique_ptr<Ort::Session> tokenizer12hz_decode_sess_;
+  // Optional streaming decoder (small-N trace for low-latency chunk decode)
+  std::unique_ptr<Ort::Session> tokenizer12hz_decode_stream_sess_;
 
   // Input/output names for each session
   std::vector<std::string> text_project_input_names_;
@@ -399,6 +438,11 @@ class OfflineTtsQwen3Model::Impl {
   std::vector<const char *> tokenizer12hz_decode_input_names_ptr_;
   std::vector<std::string> tokenizer12hz_decode_output_names_;
   std::vector<const char *> tokenizer12hz_decode_output_names_ptr_;
+
+  std::vector<std::string> tokenizer12hz_decode_stream_input_names_;
+  std::vector<const char *> tokenizer12hz_decode_stream_input_names_ptr_;
+  std::vector<std::string> tokenizer12hz_decode_stream_output_names_;
+  std::vector<const char *> tokenizer12hz_decode_stream_output_names_ptr_;
 };
 
 OfflineTtsQwen3Model::OfflineTtsQwen3Model(const OfflineTtsModelConfig &config)
@@ -461,6 +505,16 @@ OfflineTtsQwen3Model::Tokenizer12hzDecodeResult
 OfflineTtsQwen3Model::RunTokenizer12hzDecode(
     Ort::Value audio_codes) const {
   return impl_->RunTokenizer12hzDecode(std::move(audio_codes));
+}
+
+OfflineTtsQwen3Model::Tokenizer12hzDecodeResult
+OfflineTtsQwen3Model::RunTokenizer12hzDecodeStream(
+    Ort::Value audio_codes) const {
+  return impl_->RunTokenizer12hzDecodeStream(std::move(audio_codes));
+}
+
+bool OfflineTtsQwen3Model::HasTokenizer12hzDecodeStream() const {
+  return impl_->HasTokenizer12hzDecodeStream();
 }
 
 const Qwen3TtsConfig &OfflineTtsQwen3Model::GetConfig() const {

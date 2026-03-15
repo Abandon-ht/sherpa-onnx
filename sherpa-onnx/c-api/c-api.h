@@ -1154,6 +1154,7 @@ SHERPA_ONNX_API typedef struct SherpaOnnxOfflineTtsQwen3ModelConfig {
   const char *speaker_encoder;
   const char *tokenizer12hz_encode;
   const char *tokenizer12hz_decode;
+  const char *tokenizer12hz_decode_stream;
   const char *tokenizer_dir;
 } SherpaOnnxOfflineTtsQwen3ModelConfig;
 

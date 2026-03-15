@@ -9,6 +9,11 @@
 #include <memory>
 #include <vector>
 
+#if __ANDROID_API__ >= 9
+#include "android/asset_manager.h"
+#include "android/asset_manager_jni.h"
+#endif
+
 #include "onnxruntime_cxx_api.h"  // NOLINT
 #include "sherpa-onnx/csrc/offline-tts-model-config.h"
 
@@ -113,8 +118,16 @@ class OfflineTtsQwen3Model {
     Ort::Value audio_values;
     Ort::Value lengths;
   };
+  // Batch decoder: traces with large T, suited for full-sequence decode.
   Tokenizer12hzDecodeResult RunTokenizer12hzDecode(
       Ort::Value audio_codes) const;
+  // Streaming decoder: uses the small-N stream model when available,
+  // otherwise falls back to the batch decoder.
+  Tokenizer12hzDecodeResult RunTokenizer12hzDecodeStream(
+      Ort::Value audio_codes) const;
+
+  // Returns true if the streaming decoder model is loaded.
+  bool HasTokenizer12hzDecodeStream() const;
 
   // Access model configuration
   const Qwen3TtsConfig &GetConfig() const;

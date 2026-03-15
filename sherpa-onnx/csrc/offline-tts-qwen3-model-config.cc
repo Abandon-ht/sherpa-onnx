@@ -30,7 +30,12 @@ void OfflineTtsQwen3ModelConfig::Register(ParseOptions *po) {
   po->Register("qwen3-tokenizer12hz-encode", &tokenizer12hz_encode,
                "Path to Qwen3-TTS tokenizer12hz_encode ONNX model");
   po->Register("qwen3-tokenizer12hz-decode", &tokenizer12hz_decode,
-               "Path to Qwen3-TTS tokenizer12hz_decode ONNX model");
+               "Path to Qwen3-TTS tokenizer12hz_decode ONNX model (batch)");
+  po->Register(
+      "qwen3-tokenizer12hz-decode-stream", &tokenizer12hz_decode_stream,
+      "Path to streaming-optimized tokenizer12hz_decode ONNX model. "
+      "Exported with small fixed max_codes_length for low-latency chunk "
+      "decode. Optional; if empty, batch decoder is used for all modes.");
   po->Register("qwen3-tokenizer-dir", &tokenizer_dir,
                "Directory containing Qwen3-TTS tokenizer files");
 }
@@ -143,6 +148,8 @@ std::string OfflineTtsQwen3ModelConfig::ToString() const {
   os << "speaker_encoder=\"" << speaker_encoder << "\", ";
   os << "tokenizer12hz_encode=\"" << tokenizer12hz_encode << "\", ";
   os << "tokenizer12hz_decode=\"" << tokenizer12hz_decode << "\", ";
+  os << "tokenizer12hz_decode_stream=\"" << tokenizer12hz_decode_stream
+     << "\", ";
   os << "tokenizer_dir=\"" << tokenizer_dir << "\")";
 
   return os.str();

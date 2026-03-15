@@ -279,6 +279,7 @@ if(SHERPA_ONNX_ENABLE_TTS)
     offline-tts-model-config.cc
     offline-tts-pocket-model-config.cc
     offline-tts-pocket-model.cc
+    offline-tts-qwen3-impl.cc
     offline-tts-qwen3-model-config.cc
     offline-tts-qwen3-model.cc
     offline-tts-supertonic-impl.cc

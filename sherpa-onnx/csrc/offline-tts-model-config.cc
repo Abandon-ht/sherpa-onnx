@@ -62,6 +62,8 @@ bool OfflineTtsModelConfig::Validate() const {
 
   if (!qwen3.talker_decode.empty()) {
     return qwen3.Validate();
+  }
+
   if (!supertonic.tts_json.empty()) {
     return supertonic.Validate();
   }

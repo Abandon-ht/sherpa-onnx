@@ -1484,6 +1484,8 @@ static sherpa_onnx::OfflineTtsConfig GetOfflineTtsConfig(
       SHERPA_ONNX_OR(config->model.qwen3.tokenizer12hz_encode, "");
   tts_config.model.qwen3.tokenizer12hz_decode =
       SHERPA_ONNX_OR(config->model.qwen3.tokenizer12hz_decode, "");
+  tts_config.model.qwen3.tokenizer12hz_decode_stream =
+      SHERPA_ONNX_OR(config->model.qwen3.tokenizer12hz_decode_stream, "");
   tts_config.model.qwen3.tokenizer_dir =
       SHERPA_ONNX_OR(config->model.qwen3.tokenizer_dir, "");
 
