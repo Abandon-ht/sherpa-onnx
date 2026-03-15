@@ -17,6 +17,7 @@ function createOfflineTts() {
         vocabJson: './sherpa-onnx-pocket-tts-int8-2026-01-26/vocab.json',
         tokenScoresJson:
             './sherpa-onnx-pocket-tts-int8-2026-01-26/token_scores.json',
+        voiceEmbeddingCacheCapacity: 50,
       },
       debug: true,
       numThreads: 2,
@@ -30,7 +31,7 @@ function createOfflineTts() {
 const tts = createOfflineTts();
 
 const text =
-    'Today as always, men fall into two groups: slaves and free men. Whoever does not have two-thirds of his day for himself, is a slave, whatever he may be: a statesman, a businessman, an official, or a scholar.'
+    'Today as always, men fall into two groups: slaves and free men. Whoever does not have two-thirds of his day for himself, is a slave, whatever he may be: a statesman, a businessman, an official, or a scholar.';
 
 const referenceAudioFilename =
     './sherpa-onnx-pocket-tts-int8-2026-01-26/test_wavs/bria.wav';
@@ -41,7 +42,7 @@ const generationConfig = new sherpa_onnx.GenerationConfig({
   referenceAudio: referenceWave.samples,
   referenceSampleRate: referenceWave.sampleRate,
   numSteps: 5,
-  extra: {max_reference_audio_len: 12}
+  extra: {max_reference_audio_len: 12, seed: 42}
 });
 
 
@@ -56,7 +57,7 @@ console.log('Wave duration', duration.toFixed(3), 'seconds');
 console.log('Elapsed', elapsed_seconds.toFixed(3), 'seconds');
 console.log(
     `RTF = ${elapsed_seconds.toFixed(3)}/${duration.toFixed(3)} =`,
-    real_time_factor.toFixed(3))
+    real_time_factor.toFixed(3));
 
 const filename = 'test-pocket-bria.wav';
 sherpa_onnx.writeWave(

@@ -35,6 +35,8 @@ set(sources
   offline-ctc-model.cc
   offline-dolphin-model-config.cc
   offline-dolphin-model.cc
+  offline-fire-red-asr-ctc-model-config.cc
+  offline-fire-red-asr-ctc-model.cc
   offline-fire-red-asr-greedy-search-decoder.cc
   offline-fire-red-asr-model-config.cc
   offline-fire-red-asr-model.cc
@@ -44,7 +46,9 @@ set(sources
   offline-medasr-ctc-model.cc
   offline-model-config.cc
   offline-moonshine-greedy-search-decoder.cc
+  offline-moonshine-v2-greedy-search-decoder.cc
   offline-moonshine-model-config.cc
+  offline-moonshine-model-v2.cc
   offline-moonshine-model.cc
   offline-nemo-enc-dec-ctc-model-config.cc
   offline-nemo-enc-dec-ctc-model.cc
@@ -277,6 +281,10 @@ if(SHERPA_ONNX_ENABLE_TTS)
     offline-tts-pocket-model.cc
     offline-tts-qwen3-model-config.cc
     offline-tts-qwen3-model.cc
+    offline-tts-supertonic-impl.cc
+    offline-tts-supertonic-model-config.cc
+    offline-tts-supertonic-model.cc
+    offline-tts-supertonic-unicode-processor.cc
     offline-tts-vits-model-config.cc
     offline-tts-vits-model.cc
     offline-tts-zipvoice-model-config.cc

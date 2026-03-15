@@ -12,6 +12,7 @@ set(srcs
   offline-canary-model-config.cc
   offline-ctc-fst-decoder-config.cc
   offline-dolphin-model-config.cc
+  offline-fire-red-asr-ctc-model-config.cc
   offline-fire-red-asr-model-config.cc
   offline-funasr-nano-model-config.cc
   offline-lm-config.cc
@@ -77,6 +78,7 @@ if(SHERPA_ONNX_ENABLE_TTS)
     offline-tts-model-config.cc
     offline-tts-pocket-model-config.cc
     offline-tts-qwen3-model-config.cc
+    offline-tts-supertonic-model-config.cc
     offline-tts-vits-model-config.cc
     offline-tts-zipvoice-model-config.cc
     offline-tts.cc

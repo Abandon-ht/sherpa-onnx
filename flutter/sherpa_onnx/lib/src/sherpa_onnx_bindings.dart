@@ -243,6 +243,19 @@ final class SherpaOnnxOfflineTtsPocketModelConfig extends Struct {
   external Pointer<Utf8> textConditioner;
   external Pointer<Utf8> vocabJson;
   external Pointer<Utf8> tokenScoresJson;
+
+  @Int32()
+  external int voiceEmbeddingCacheCapacity;
+}
+
+final class SherpaOnnxOfflineTtsSupertonicModelConfig extends Struct {
+  external Pointer<Utf8> durationPredictor;
+  external Pointer<Utf8> textEncoder;
+  external Pointer<Utf8> vectorEstimator;
+  external Pointer<Utf8> vocoder;
+  external Pointer<Utf8> ttsJson;
+  external Pointer<Utf8> unicodeIndexer;
+  external Pointer<Utf8> voiceStyle;
 }
 
 final class SherpaOnnxOfflineTtsModelConfig extends Struct {
@@ -259,6 +272,7 @@ final class SherpaOnnxOfflineTtsModelConfig extends Struct {
   external SherpaOnnxOfflineTtsKittenModelConfig kitten;
   external SherpaOnnxOfflineTtsZipVoiceModelConfig zipvoice;
   external SherpaOnnxOfflineTtsPocketModelConfig pocket;
+  external SherpaOnnxOfflineTtsSupertonicModelConfig supertonic;
 }
 
 final class SherpaOnnxOfflineTtsConfig extends Struct {
@@ -352,6 +366,10 @@ final class SherpaOnnxOfflineMedAsrCtcModelConfig extends Struct {
   external Pointer<Utf8> model;
 }
 
+final class SherpaOnnxOfflineFireRedAsrCtcModelConfig extends Struct {
+  external Pointer<Utf8> model;
+}
+
 final class SherpaOnnxOfflineFunAsrNanoModelConfig extends Struct {
   external Pointer<Utf8> encoderAdaptor;
   external Pointer<Utf8> llm;
@@ -371,6 +389,13 @@ final class SherpaOnnxOfflineFunAsrNanoModelConfig extends Struct {
 
   @Int32()
   external int seed;
+
+  external Pointer<Utf8> language;
+
+  @Int32()
+  external int itn;
+
+  external Pointer<Utf8> hotwords;
 }
 
 final class SherpaOnnxOfflineWhisperModelConfig extends Struct {
@@ -381,6 +406,12 @@ final class SherpaOnnxOfflineWhisperModelConfig extends Struct {
 
   @Int32()
   external int tailPaddings;
+
+  @Int32()
+  external int enableTokenTimestamps;
+
+  @Int32()
+  external int enableSegmentTimestamps;
 }
 
 final class SherpaOnnxOfflineCanaryModelConfig extends Struct {
@@ -398,6 +429,7 @@ final class SherpaOnnxOfflineMoonshineModelConfig extends Struct {
   external Pointer<Utf8> encoder;
   external Pointer<Utf8> uncachedDecoder;
   external Pointer<Utf8> cachedDecoder;
+  external Pointer<Utf8> mergedDecoder;
 }
 
 final class SherpaOnnxOfflineFireRedAsrModelConfig extends Struct {
@@ -456,6 +488,7 @@ final class SherpaOnnxOfflineModelConfig extends Struct {
   external SherpaOnnxOfflineOmnilingualAsrCtcModelConfig omnilingual;
   external SherpaOnnxOfflineMedAsrCtcModelConfig medasr;
   external SherpaOnnxOfflineFunAsrNanoModelConfig funasrNano;
+  external SherpaOnnxOfflineFireRedAsrCtcModelConfig fireRedAsrCtc;
 }
 
 final class SherpaOnnxOfflineRecognizerConfig extends Struct {

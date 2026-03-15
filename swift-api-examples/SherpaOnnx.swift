@@ -384,6 +384,14 @@ func sherpaOnnxOfflineMedAsrCtcModelConfig(
   )
 }
 
+func sherpaOnnxOfflineFireRedAsrCtcModelConfig(
+  model: String = ""
+) -> SherpaOnnxOfflineFireRedAsrCtcModelConfig {
+  return SherpaOnnxOfflineFireRedAsrCtcModelConfig(
+    model: toCPointer(model)
+  )
+}
+
 func sherpaOnnxOfflineNemoEncDecCtcModelConfig(
   model: String = ""
 ) -> SherpaOnnxOfflineNemoEncDecCtcModelConfig {
@@ -446,17 +454,22 @@ func sherpaOnnxOfflineFireRedAsrModelConfig(
   )
 }
 
+// there are two versions of Moonshine
+// For v1, you need four models: preprocessor, encoder, uncachedDecoder, cachedDecoder
+// For v2, you need two models: encoder, mergedDecoder
 func sherpaOnnxOfflineMoonshineModelConfig(
   preprocessor: String = "",
   encoder: String = "",
   uncachedDecoder: String = "",
-  cachedDecoder: String = ""
+  cachedDecoder: String = "",
+  mergedDecoder: String = ""
 ) -> SherpaOnnxOfflineMoonshineModelConfig {
   return SherpaOnnxOfflineMoonshineModelConfig(
     preprocessor: toCPointer(preprocessor),
     encoder: toCPointer(encoder),
     uncached_decoder: toCPointer(uncachedDecoder),
-    cached_decoder: toCPointer(cachedDecoder)
+    cached_decoder: toCPointer(cachedDecoder),
+    merged_decoder: toCPointer(mergedDecoder)
   )
 }
 
@@ -550,7 +563,9 @@ func sherpaOnnxOfflineModelConfig(
   medasr: SherpaOnnxOfflineMedAsrCtcModelConfig =
     sherpaOnnxOfflineMedAsrCtcModelConfig(),
   funasrNano: SherpaOnnxOfflineFunASRNanoModelConfig =
-    sherpaOnnxOfflineFunASRNanoModelConfig()
+    sherpaOnnxOfflineFunASRNanoModelConfig(),
+  fireRedAsrCtc: SherpaOnnxOfflineFireRedAsrCtcModelConfig =
+    sherpaOnnxOfflineFireRedAsrCtcModelConfig()
 ) -> SherpaOnnxOfflineModelConfig {
   return SherpaOnnxOfflineModelConfig(
     transducer: transducer,
@@ -575,7 +590,8 @@ func sherpaOnnxOfflineModelConfig(
     wenet_ctc: wenetCtc,
     omnilingual: omnilingual,
     medasr: medasr,
-    funasr_nano: funasrNano
+    funasr_nano: funasrNano,
+    fire_red_asr_ctc: fireRedAsrCtc
   )
 }
 
@@ -1035,6 +1051,7 @@ func sherpaOnnxOfflineTtsPocketModelConfig(
   textConditioner: String = "",
   vocabJson: String = "",
   tokenScoresJson: String = "",
+  voiceEmbeddingCacheCapacity: Int = 50
 ) -> SherpaOnnxOfflineTtsPocketModelConfig {
   return SherpaOnnxOfflineTtsPocketModelConfig(
     lm_flow: toCPointer(lmFlow),
@@ -1043,7 +1060,28 @@ func sherpaOnnxOfflineTtsPocketModelConfig(
     decoder: toCPointer(decoder),
     text_conditioner: toCPointer(textConditioner),
     vocab_json: toCPointer(vocabJson),
-    token_scores_json: toCPointer(tokenScoresJson)
+    token_scores_json: toCPointer(tokenScoresJson),
+    voice_embedding_cache_capacity: Int32(voiceEmbeddingCacheCapacity)
+  )
+}
+
+func sherpaOnnxOfflineTtsSupertonicModelConfig(
+  durationPredictor: String = "",
+  textEncoder: String = "",
+  vectorEstimator: String = "",
+  vocoder: String = "",
+  ttsJson: String = "",
+  unicodeIndexer: String = "",
+  voiceStyle: String = ""
+) -> SherpaOnnxOfflineTtsSupertonicModelConfig {
+  return SherpaOnnxOfflineTtsSupertonicModelConfig(
+    duration_predictor: toCPointer(durationPredictor),
+    text_encoder: toCPointer(textEncoder),
+    vector_estimator: toCPointer(vectorEstimator),
+    vocoder: toCPointer(vocoder),
+    tts_json: toCPointer(ttsJson),
+    unicode_indexer: toCPointer(unicodeIndexer),
+    voice_style: toCPointer(voiceStyle)
   )
 }
 
@@ -1056,7 +1094,8 @@ func sherpaOnnxOfflineTtsModelConfig(
   provider: String = "cpu",
   kitten: SherpaOnnxOfflineTtsKittenModelConfig = sherpaOnnxOfflineTtsKittenModelConfig(),
   zipvoice: SherpaOnnxOfflineTtsZipvoiceModelConfig = sherpaOnnxOfflineTtsZipvoiceModelConfig(),
-  pocket: SherpaOnnxOfflineTtsPocketModelConfig = sherpaOnnxOfflineTtsPocketModelConfig()
+  pocket: SherpaOnnxOfflineTtsPocketModelConfig = sherpaOnnxOfflineTtsPocketModelConfig(),
+  supertonic: SherpaOnnxOfflineTtsSupertonicModelConfig = sherpaOnnxOfflineTtsSupertonicModelConfig()
 ) -> SherpaOnnxOfflineTtsModelConfig {
   return SherpaOnnxOfflineTtsModelConfig(
     vits: vits,
@@ -1067,7 +1106,8 @@ func sherpaOnnxOfflineTtsModelConfig(
     kokoro: kokoro,
     kitten: kitten,
     zipvoice: zipvoice,
-    pocket: pocket
+    pocket: pocket,
+    supertonic: supertonic
   )
 }
 
@@ -1232,7 +1272,7 @@ final class SherpaOnnxGenerationConfigC {
         silence_scale: swiftConfig.silenceScale,
         speed: swiftConfig.speed,
         sid: Int32(swiftConfig.sid),
-        reference_audio: buffer.baseAddress,
+        reference_audio: buffer.count > 0 ? buffer.baseAddress : nil,
         reference_audio_len: Int32(buffer.count),
         reference_sample_rate: Int32(swiftConfig.referenceSampleRate),
         reference_text: toCPointer(swiftConfig.referenceText),

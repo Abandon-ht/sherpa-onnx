@@ -154,7 +154,7 @@ void OnlineRecognizer::Decode(const OnlineStream *ss, int32_t n) const {
   }
 
   std::vector<const SherpaOnnxOnlineStream *> streams(n);
-  for (int32_t i = 0; i != n; ++n) {
+  for (int32_t i = 0; i != n; ++i) {
     streams[i] = ss[i].Get();
   }
 
@@ -226,6 +226,10 @@ static SherpaOnnxOfflineRecognizerConfig Convert(
   c.model_config.whisper.task = config.model_config.whisper.task.c_str();
   c.model_config.whisper.tail_paddings =
       config.model_config.whisper.tail_paddings;
+  c.model_config.whisper.enable_token_timestamps =
+      config.model_config.whisper.enable_token_timestamps;
+  c.model_config.whisper.enable_segment_timestamps =
+      config.model_config.whisper.enable_segment_timestamps;
 
   c.model_config.tdnn.model = config.model_config.tdnn.model.c_str();
 
@@ -252,6 +256,8 @@ static SherpaOnnxOfflineRecognizerConfig Convert(
       config.model_config.moonshine.uncached_decoder.c_str();
   c.model_config.moonshine.cached_decoder =
       config.model_config.moonshine.cached_decoder.c_str();
+  c.model_config.moonshine.merged_decoder =
+      config.model_config.moonshine.merged_decoder.c_str();
 
   c.model_config.fire_red_asr.encoder =
       config.model_config.fire_red_asr.encoder.c_str();
@@ -289,19 +295,17 @@ static SherpaOnnxOfflineRecognizerConfig Convert(
       config.model_config.funasr_nano.max_new_tokens;
   c.model_config.funasr_nano.temperature =
       config.model_config.funasr_nano.temperature;
-  c.model_config.funasr_nano.top_p =
-      config.model_config.funasr_nano.top_p;
-  c.model_config.funasr_nano.seed =
-      config.model_config.funasr_nano.seed;
-  c.model_config.funasr_nano.language =
-      config.model_config.funasr_nano.language.c_str();
-  c.model_config.funasr_nano.itn =
-      config.model_config.funasr_nano.itn ? 1 : 0;
-  c.model_config.funasr_nano.hotwords =
-      config.model_config.funasr_nano.hotwords.c_str();
   c.model_config.funasr_nano.top_p = config.model_config.funasr_nano.top_p;
   c.model_config.funasr_nano.seed = config.model_config.funasr_nano.seed;
+  c.model_config.funasr_nano.language =
+      config.model_config.funasr_nano.language.c_str();
+  c.model_config.funasr_nano.itn = config.model_config.funasr_nano.itn ? 1 : 0;
+  c.model_config.funasr_nano.hotwords =
+      config.model_config.funasr_nano.hotwords.c_str();
   c.model_config.medasr.model = config.model_config.medasr.model.c_str();
+
+  c.model_config.fire_red_asr_ctc.model =
+      config.model_config.fire_red_asr_ctc.model.c_str();
 
   c.lm_config.model = config.lm_config.model.c_str();
   c.lm_config.scale = config.lm_config.scale;
@@ -480,6 +484,20 @@ OfflineTts OfflineTts::Create(const OfflineTtsConfig &config) {
   c.model.qwen3.tokenizer12hz_decode =
       config.model.qwen3.tokenizer12hz_decode.c_str();
   c.model.qwen3.tokenizer_dir = config.model.qwen3.tokenizer_dir.c_str();
+  c.model.pocket.voice_embedding_cache_capacity =
+      config.model.pocket.voice_embedding_cache_capacity;
+
+  c.model.supertonic.duration_predictor =
+      config.model.supertonic.duration_predictor.c_str();
+  c.model.supertonic.text_encoder =
+      config.model.supertonic.text_encoder.c_str();
+  c.model.supertonic.vector_estimator =
+      config.model.supertonic.vector_estimator.c_str();
+  c.model.supertonic.vocoder = config.model.supertonic.vocoder.c_str();
+  c.model.supertonic.tts_json = config.model.supertonic.tts_json.c_str();
+  c.model.supertonic.unicode_indexer =
+      config.model.supertonic.unicode_indexer.c_str();
+  c.model.supertonic.voice_style = config.model.supertonic.voice_style.c_str();
 
   c.model.num_threads = config.model.num_threads;
   c.model.debug = config.model.debug;
@@ -632,6 +650,8 @@ KeywordSpotter KeywordSpotter::Create(const KeywordSpotterConfig &config) {
   c.keywords_score = config.keywords_score;
   c.keywords_threshold = config.keywords_threshold;
   c.keywords_file = config.keywords_file.c_str();
+  c.keywords_buf = config.keywords_buf.c_str();
+  c.keywords_buf_size = static_cast<int32_t>(config.keywords_buf.size());
 
   auto p = SherpaOnnxCreateKeywordSpotter(&c);
   return KeywordSpotter(p);
@@ -668,7 +688,7 @@ void KeywordSpotter::Decode(const OnlineStream *ss, int32_t n) const {
   }
 
   std::vector<const SherpaOnnxOnlineStream *> streams(n);
-  for (int32_t i = 0; i != n; ++n) {
+  for (int32_t i = 0; i != n; ++i) {
     streams[i] = ss[i].Get();
   }
 
@@ -849,6 +869,7 @@ SpeechSegment VoiceActivityDetector::Front() const {
   auto f = SherpaOnnxVoiceActivityDetectorFront(p_);
 
   SpeechSegment segment;
+  if (!f) return segment;
   segment.start = f->start;
   segment.samples = std::vector<float>{f->samples, f->samples + f->n};
 
@@ -944,6 +965,7 @@ void OfflinePunctuation::Destroy(const SherpaOnnxOfflinePunctuation *p) const {
 
 std::string OfflinePunctuation::AddPunctuation(const std::string &text) const {
   const char *result = SherpaOfflinePunctuationAddPunct(p_, text.c_str());
+  if (!result) return {};
   std::string ans(result);
   SherpaOfflinePunctuationFreeText(result);
   return ans;
@@ -976,6 +998,7 @@ void OnlinePunctuation::Destroy(const SherpaOnnxOnlinePunctuation *p) const {
 
 std::string OnlinePunctuation::AddPunctuation(const std::string &text) const {
   const char *result = SherpaOnnxOnlinePunctuationAddPunct(p_, text.c_str());
+  if (!result) return {};
   std::string ans(result);
   SherpaOnnxOnlinePunctuationFreeText(result);
   return ans;

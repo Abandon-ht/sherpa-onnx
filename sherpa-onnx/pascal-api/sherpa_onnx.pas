@@ -144,6 +144,20 @@ type
     TextConditioner: AnsiString;
     VocabJson: AnsiString;
     TokenScoresJson: AnsiString;
+    VoiceEmbeddingCacheCapacity: Integer;
+
+    function ToString: AnsiString;
+    class operator Initialize({$IFDEF FPC}var{$ELSE}out{$ENDIF} Dest: TSherpaOnnxOfflineTtsPocketModelConfig);
+  end;
+
+  TSherpaOnnxOfflineTtsSupertonicModelConfig = record
+    DurationPredictor: AnsiString;
+    TextEncoder: AnsiString;
+    VectorEstimator: AnsiString;
+    Vocoder: AnsiString;
+    TtsJson: AnsiString;
+    UnicodeIndexer: AnsiString;
+    VoiceStyle: AnsiString;
 
     function ToString: AnsiString;
   end;
@@ -158,6 +172,7 @@ type
     Kitten: TSherpaOnnxOfflineTtsKittenModelConfig;
     ZipVoice: TSherpaOnnxOfflineTtsZipVoiceModelConfig;
     Pocket: TSherpaOnnxOfflineTtsPocketModelConfig;
+    Supertonic: TSherpaOnnxOfflineTtsSupertonicModelConfig;
 
     function ToString: AnsiString;
     class operator Initialize({$IFDEF FPC}var{$ELSE}out{$ENDIF} Dest: TSherpaOnnxOfflineTtsModelConfig);
@@ -383,6 +398,11 @@ type
     function ToString: AnsiString;
   end;
 
+  TSherpaOnnxOfflineFireRedAsrCtcModelConfig = record
+    Model: AnsiString;
+    function ToString: AnsiString;
+  end;
+
   TSherpaOnnxOfflineFunAsrNanoModelConfig = record
     EncoderAdaptor: AnsiString;
     LLM: AnsiString;
@@ -428,6 +448,7 @@ type
     Encoder: AnsiString;
     UncachedDecoder: AnsiString;
     CachedDecoder: AnsiString;
+    MergedDecoder: AnsiString;
     function ToString: AnsiString;
   end;
 
@@ -481,6 +502,7 @@ type
     Omnilingual: TSherpaOnnxOfflineOmnilingualAsrCtcModelConfig;
     MedAsr: TSherpaOnnxOfflineMedAsrCtcModelConfig;
     FunAsrNano: TSherpaOnnxOfflineFunAsrNanoModelConfig;
+    FireRedAsrCtc: TSherpaOnnxOfflineFireRedAsrCtcModelConfig;
     class operator Initialize({$IFDEF FPC}var{$ELSE}out{$ENDIF} Dest: TSherpaOnnxOfflineModelConfig);
     function ToString: AnsiString;
   end;
@@ -911,6 +933,9 @@ type
     UseItn: cint32;
     Hotwords: PAnsiChar;
   end;
+  SherpaOnnxOfflineFireRedAsrCtcModelConfig = record
+    Model: PAnsiChar;
+  end;
   SherpaOnnxOfflineWhisperModelConfig = record
     Encoder: PAnsiChar;
     Decoder: PAnsiChar;
@@ -936,6 +961,7 @@ type
     Encoder: PAnsiChar;
     UncachedDecoder: PAnsiChar;
     CachedDecoder: PAnsiChar;
+    MergedDecoder: PAnsiChar;
   end;
   SherpaOnnxOfflineTdnnModelConfig = record
     Model: PAnsiChar;
@@ -973,6 +999,7 @@ type
     Omnilingual: SherpaOnnxOfflineOmnilingualAsrCtcModelConfig;
     MedAsr: SherpaOnnxOfflineMedAsrCtcModelConfig;
     FunAsrNano: SherpaOnnxOfflineFunAsrNanoModelConfig;
+    FireRedAsrCtc: SherpaOnnxOfflineFireRedAsrCtcModelConfig;
   end;
 
   SherpaOnnxOfflineRecognizerConfig = record
@@ -1103,6 +1130,17 @@ type
     TextConditioner: PAnsiChar;
     VocabJson: PAnsiChar;
     TokenScoresJson: PAnsiChar;
+    VoiceEmbeddingCacheCapacity: cint32;
+  end;
+
+  SherpaOnnxOfflineTtsSupertonicModelConfig = record
+    DurationPredictor: PAnsiChar;
+    TextEncoder: PAnsiChar;
+    VectorEstimator: PAnsiChar;
+    Vocoder: PAnsiChar;
+    TtsJson: PAnsiChar;
+    UnicodeIndexer: PAnsiChar;
+    VoiceStyle: PAnsiChar;
   end;
 
   SherpaOnnxOfflineTtsModelConfig = record
@@ -1115,6 +1153,7 @@ type
     Kitten: SherpaOnnxOfflineTtsKittenModelConfig;
     ZipVoice: SherpaOnnxOfflineTtsZipVoiceModelConfig;
     Pocket: SherpaOnnxOfflineTtsPocketModelConfig;
+    Supertonic: SherpaOnnxOfflineTtsSupertonicModelConfig;
   end;
 
   SherpaOnnxOfflineTtsConfig = record
@@ -1837,6 +1876,12 @@ begin
     [Self.Model]);
 end;
 
+function TSherpaOnnxOfflineFireRedAsrCtcModelConfig.ToString: AnsiString;
+begin
+  Result := Format('TSherpaOnnxOfflineFireRedAsrCtcModelConfig(Model := %s)',
+    [Self.Model]);
+end;
+
 function TSherpaOnnxOfflineFunAsrNanoModelConfig.ToString: AnsiString;
 begin
   Result := Format('TSherpaOnnxOfflineFunAsrNanoModelConfig(' +
@@ -1902,8 +1947,10 @@ begin
     'Preprocessor := %s, ' +
     'Encoder := %s, ' +
     'UncachedDecoder := %s, ' +
-    'CachedDecoder := %s)',
-    [Self.Preprocessor, Self.Encoder, Self.UncachedDecoder, Self.CachedDecoder]);
+    'CachedDecoder := %s, ' +
+    'MergedDecoder := %s)',
+    [Self.Preprocessor, Self.Encoder, Self.UncachedDecoder, Self.CachedDecoder,
+     Self.MergedDecoder]);
 end;
 
 function TSherpaOnnxOfflineTdnnModelConfig.ToString: AnsiString;
@@ -1957,6 +2004,7 @@ begin
     'Omnilingual := %s' +
     ', MedAsr := %s' +
     ', FunAsrNano := %s' +
+    ', FireRedAsrCtc := %s' +
     ')',
     [Self.Transducer.ToString, Self.Paraformer.ToString,
      Self.NeMoCtc.ToString, Self.Whisper.ToString, Self.Tdnn.ToString,
@@ -1966,7 +2014,7 @@ begin
      Self.FireRedAsr.ToString, Self.Dolphin.ToString,
      Self.ZipformerCtc.ToString, Self.Canary.ToString, Self.WenetCtc.ToString,
      Self.Omnilingual.ToString, Self.MedAsr.ToString,
-     Self.FunAsrNano.ToString
+     Self.FunAsrNano.ToString, Self.FireRedAsrCtc.ToString
      ]);
 end;
 
@@ -2034,6 +2082,7 @@ begin
   C.ModelConfig.Moonshine.Encoder := PAnsiChar(Config.ModelConfig.Moonshine.Encoder);
   C.ModelConfig.Moonshine.UncachedDecoder := PAnsiChar(Config.ModelConfig.Moonshine.UncachedDecoder);
   C.ModelConfig.Moonshine.CachedDecoder := PAnsiChar(Config.ModelConfig.Moonshine.CachedDecoder);
+  C.ModelConfig.Moonshine.MergedDecoder := PAnsiChar(Config.ModelConfig.Moonshine.MergedDecoder);
 
   C.ModelConfig.FireRedAsr.Encoder := PAnsiChar(Config.ModelConfig.FireRedAsr.Encoder);
   C.ModelConfig.FireRedAsr.Decoder := PAnsiChar(Config.ModelConfig.FireRedAsr.Decoder);
@@ -2064,6 +2113,8 @@ begin
   C.ModelConfig.FunAsrNano.Language := PAnsiChar(Config.ModelConfig.FunAsrNano.Language);
   C.ModelConfig.FunAsrNano.UseItn := Ord(Config.ModelConfig.FunAsrNano.UseItn);
   C.ModelConfig.FunAsrNano.Hotwords := PAnsiChar(Config.ModelConfig.FunAsrNano.Hotwords);
+
+  C.ModelConfig.FireRedAsrCtc.Model := PAnsiChar(Config.ModelConfig.FireRedAsrCtc.Model);
 
   C.LMConfig.Model := PAnsiChar(Config.LMConfig.Model);
   C.LMConfig.Scale := Config.LMConfig.Scale;
@@ -2638,6 +2689,11 @@ begin
   Dest.GuidanceScale := 1.0;
 end;
 
+class operator TSherpaOnnxOfflineTtsPocketModelConfig.Initialize({$IFDEF FPC}var{$ELSE}out{$ENDIF} Dest: TSherpaOnnxOfflineTtsPocketModelConfig);
+begin
+  Dest.VoiceEmbeddingCacheCapacity := 50;
+end;
+
 function TSherpaOnnxOfflineTtsPocketModelConfig.ToString: AnsiString;
 begin
   Result := Format('TSherpaOnnxOfflineTtsPocketModelConfig(' +
@@ -2647,10 +2703,26 @@ begin
     'Decoder := %s, ' +
     'TextConditioner := %s, ' +
     'VocabJson := %s, ' +
-    'TokenScoresJson := %s' +
+    'TokenScoresJson := %s, ' +
+    'VoiceEmbeddingCacheCapacity := %d' +
     ')',
     [Self.LmFlow, Self.LmMain, Self.Encoder, Self.Decoder, Self.TextConditioner,
-     Self.VocabJson, Self.TokenScoresJson]);
+     Self.VocabJson, Self.TokenScoresJson, Self.VoiceEmbeddingCacheCapacity]);
+end;
+
+function TSherpaOnnxOfflineTtsSupertonicModelConfig.ToString: AnsiString;
+begin
+  Result := Format('TSherpaOnnxOfflineTtsSupertonicModelConfig(' +
+    'DurationPredictor := %s, ' +
+    'TextEncoder := %s, ' +
+    'VectorEstimator := %s, ' +
+    'Vocoder := %s, ' +
+    'TtsJson := %s, ' +
+    'UnicodeIndexer := %s, ' +
+    'VoiceStyle := %s' +
+    ')',
+    [Self.DurationPredictor, Self.TextEncoder, Self.VectorEstimator, Self.Vocoder,
+     Self.TtsJson, Self.UnicodeIndexer, Self.VoiceStyle]);
 end;
 
 function TSherpaOnnxOfflineTtsModelConfig.ToString: AnsiString;
@@ -2664,11 +2736,12 @@ begin
     'Kokoro := %s, ' +
     'Kitten := %s, ' +
     'ZipVoice := %s, ' +
-    'Pocket := %s' +
+    'Pocket := %s, ' +
+    'Supertonic := %s' +
     ')',
     [Self.Vits.ToString, Self.NumThreads, Self.Debug.ToString, Self.Provider,
      Self.Matcha.ToString, Self.Kokoro.ToString, Self.Kitten.ToString,
-     Self.ZipVoice.ToString, Self.Pocket.ToString
+     Self.ZipVoice.ToString, Self.Pocket.ToString, Self.Supertonic.ToString
     ]);
 end;
 
@@ -2753,6 +2826,15 @@ begin
   C.Model.Pocket.TextConditioner := PAnsiChar(Config.Model.Pocket.TextConditioner);
   C.Model.Pocket.VocabJson := PAnsiChar(Config.Model.Pocket.VocabJson);
   C.Model.Pocket.TokenScoresJson := PAnsiChar(Config.Model.Pocket.TokenScoresJson);
+  C.Model.Pocket.VoiceEmbeddingCacheCapacity := Config.Model.Pocket.VoiceEmbeddingCacheCapacity;
+
+  C.Model.Supertonic.DurationPredictor := PAnsiChar(Config.Model.Supertonic.DurationPredictor);
+  C.Model.Supertonic.TextEncoder := PAnsiChar(Config.Model.Supertonic.TextEncoder);
+  C.Model.Supertonic.VectorEstimator := PAnsiChar(Config.Model.Supertonic.VectorEstimator);
+  C.Model.Supertonic.Vocoder := PAnsiChar(Config.Model.Supertonic.Vocoder);
+  C.Model.Supertonic.TtsJson := PAnsiChar(Config.Model.Supertonic.TtsJson);
+  C.Model.Supertonic.UnicodeIndexer := PAnsiChar(Config.Model.Supertonic.UnicodeIndexer);
+  C.Model.Supertonic.VoiceStyle := PAnsiChar(Config.Model.Supertonic.VoiceStyle);
 
   C.Model.NumThreads := Config.Model.NumThreads;
   C.Model.Provider := PAnsiChar(Config.Model.Provider);

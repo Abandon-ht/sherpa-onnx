@@ -246,6 +246,37 @@ static OfflineTtsConfig GetOfflineTtsConfig(JNIEnv *env, jobject config,
   SHERPA_ONNX_JNI_READ_STRING(ans.model.pocket.token_scores_json,
                               tokenScoresJson, pocket_cls, pocket);
 
+  SHERPA_ONNX_JNI_READ_INT(ans.model.pocket.voice_embedding_cache_capacity,
+                           voiceEmbeddingCacheCapacity, pocket_cls, pocket);
+
+  // supertonic
+  fid = env->GetFieldID(
+      model_config_cls, "supertonic",
+      "Lcom/k2fsa/sherpa/onnx/OfflineTtsSupertonicModelConfig;");
+  jobject supertonic = env->GetObjectField(model, fid);
+  jclass supertonic_cls = env->GetObjectClass(supertonic);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.supertonic.duration_predictor,
+                              durationPredictor, supertonic_cls, supertonic);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.supertonic.text_encoder, textEncoder,
+                              supertonic_cls, supertonic);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.supertonic.vector_estimator,
+                              vectorEstimator, supertonic_cls, supertonic);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.supertonic.vocoder, vocoder,
+                              supertonic_cls, supertonic);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.supertonic.tts_json, ttsJson,
+                              supertonic_cls, supertonic);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.supertonic.unicode_indexer,
+                              unicodeIndexer, supertonic_cls, supertonic);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.supertonic.voice_style, voiceStyle,
+                              supertonic_cls, supertonic);
+
   SHERPA_ONNX_JNI_READ_INT(ans.model.num_threads, numThreads, model_config_cls,
                            model);
 
@@ -273,6 +304,8 @@ static OfflineTtsConfig GetOfflineTtsConfig(JNIEnv *env, jobject config,
   env->DeleteLocalRef(kitten_cls);
   env->DeleteLocalRef(pocket);
   env->DeleteLocalRef(pocket_cls);
+  env->DeleteLocalRef(supertonic);
+  env->DeleteLocalRef(supertonic_cls);
   env->DeleteLocalRef(model_config_cls);
   env->DeleteLocalRef(cls);
 
@@ -369,9 +402,15 @@ JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OfflineTts_newFromAsset(
     return 0;
   }
 
-  auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
-  for (const auto &s : str_vec) {
-    SHERPA_ONNX_LOGE("%s", s.c_str());
+  if (config.model.debug) {
+#if __ANDROID_API__
+    auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
+    for (const auto &s : str_vec) {
+      SHERPA_ONNX_LOGE("%s", s.c_str());
+    }
+#else
+    SHERPA_ONNX_LOGE("%s", config.ToString().c_str());
+#endif
   }
 
   auto tts = new sherpa_onnx::OfflineTts(
@@ -401,6 +440,7 @@ JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OfflineTts_newFromFile(
 
         if (!config.Validate()) {
           SHERPA_ONNX_LOGE("Errors found in config!");
+          return 0;
         }
 
         auto tts = new sherpa_onnx::OfflineTts(config);

@@ -428,6 +428,10 @@ type OfflineMedAsrCtcModelConfig struct {
 	Model string // Path to the model, e.g., model.onnx or model.int8.onnx
 }
 
+type OfflineFireRedAsrCtcModelConfig struct {
+	Model string // Path to the model, e.g., model.onnx or model.int8.onnx
+}
+
 type OfflineDolphinModelConfig struct {
 	Model string // Path to the model, e.g., model.onnx or model.int8.onnx
 }
@@ -471,11 +475,17 @@ type OfflineFunASRNanoModelConfig struct {
 	Hotwords                    string
 }
 
+// For Moonshine v1, you need 4 models:
+//   - preprocessor, encoder, uncached_decoder, cached_decoder
+//
+// For Moonshine v2, you need 2 models:
+//   - encoder, merged_decoder
 type OfflineMoonshineModelConfig struct {
 	Preprocessor    string
 	Encoder         string
 	UncachedDecoder string
 	CachedDecoder   string
+	MergedDecoder   string
 }
 
 type OfflineTdnnModelConfig struct {
@@ -495,22 +505,23 @@ type OfflineLMConfig struct {
 }
 
 type OfflineModelConfig struct {
-	Transducer   OfflineTransducerModelConfig
-	Paraformer   OfflineParaformerModelConfig
-	NemoCTC      OfflineNemoEncDecCtcModelConfig
-	Whisper      OfflineWhisperModelConfig
-	Tdnn         OfflineTdnnModelConfig
-	SenseVoice   OfflineSenseVoiceModelConfig
-	Moonshine    OfflineMoonshineModelConfig
-	FireRedAsr   OfflineFireRedAsrModelConfig
-	FunAsrNano   OfflineFunASRNanoModelConfig
-	Dolphin      OfflineDolphinModelConfig
-	ZipformerCtc OfflineZipformerCtcModelConfig
-	Canary       OfflineCanaryModelConfig
-	WenetCtc     OfflineWenetCtcModelConfig
-	Omnilingual  OfflineOmnilingualAsrCtcModelConfig
-	MedAsr       OfflineMedAsrCtcModelConfig
-	Tokens       string // Path to tokens.txt
+	Transducer    OfflineTransducerModelConfig
+	Paraformer    OfflineParaformerModelConfig
+	NemoCTC       OfflineNemoEncDecCtcModelConfig
+	Whisper       OfflineWhisperModelConfig
+	Tdnn          OfflineTdnnModelConfig
+	SenseVoice    OfflineSenseVoiceModelConfig
+	Moonshine     OfflineMoonshineModelConfig
+	FireRedAsr    OfflineFireRedAsrModelConfig
+	FunAsrNano    OfflineFunASRNanoModelConfig
+	Dolphin       OfflineDolphinModelConfig
+	ZipformerCtc  OfflineZipformerCtcModelConfig
+	Canary        OfflineCanaryModelConfig
+	WenetCtc      OfflineWenetCtcModelConfig
+	Omnilingual   OfflineOmnilingualAsrCtcModelConfig
+	MedAsr        OfflineMedAsrCtcModelConfig
+	FireRedAsrCtc OfflineFireRedAsrCtcModelConfig
+	Tokens        string // Path to tokens.txt
 
 	// Number of threads to use for neural network computation
 	NumThreads int
@@ -600,6 +611,7 @@ func newCOfflineRecognizerConfig(config *OfflineRecognizerConfig) *C.struct_Sher
 	c.model_config.moonshine.encoder = C.CString(config.ModelConfig.Moonshine.Encoder)
 	c.model_config.moonshine.uncached_decoder = C.CString(config.ModelConfig.Moonshine.UncachedDecoder)
 	c.model_config.moonshine.cached_decoder = C.CString(config.ModelConfig.Moonshine.CachedDecoder)
+	c.model_config.moonshine.merged_decoder = C.CString(config.ModelConfig.Moonshine.MergedDecoder)
 
 	c.model_config.fire_red_asr.encoder = C.CString(config.ModelConfig.FireRedAsr.Encoder)
 	c.model_config.fire_red_asr.decoder = C.CString(config.ModelConfig.FireRedAsr.Decoder)
@@ -631,6 +643,7 @@ func newCOfflineRecognizerConfig(config *OfflineRecognizerConfig) *C.struct_Sher
 
 	c.model_config.omnilingual.model = C.CString(config.ModelConfig.Omnilingual.Model)
 	c.model_config.medasr.model = C.CString(config.ModelConfig.MedAsr.Model)
+	c.model_config.fire_red_asr_ctc.model = C.CString(config.ModelConfig.FireRedAsrCtc.Model)
 
 	c.model_config.tokens = C.CString(config.ModelConfig.Tokens)
 
@@ -685,6 +698,7 @@ func freeCOfflineRecognizerConfig(c *C.struct_SherpaOnnxOfflineRecognizerConfig)
 		&c.model_config.moonshine.encoder,
 		&c.model_config.moonshine.uncached_decoder,
 		&c.model_config.moonshine.cached_decoder,
+		&c.model_config.moonshine.merged_decoder,
 		&c.model_config.fire_red_asr.encoder,
 		&c.model_config.fire_red_asr.decoder,
 		&c.model_config.funasr_nano.encoder_adaptor,
@@ -703,6 +717,7 @@ func freeCOfflineRecognizerConfig(c *C.struct_SherpaOnnxOfflineRecognizerConfig)
 		&c.model_config.canary.tgt_lang,
 		&c.model_config.wenet_ctc.model,
 		&c.model_config.medasr.model,
+		&c.model_config.fire_red_asr_ctc.model,
 		&c.model_config.omnilingual.model,
 		&c.model_config.tokens,
 		&c.model_config.provider,
@@ -879,13 +894,14 @@ type OfflineTtsKittenModelConfig struct {
 }
 
 type OfflineTtsPocketModelConfig struct {
-	LmFlow          string // lm_flow
-	LmMain          string // lm_main
-	Encoder         string // encoder
-	Decoder         string // decoder
-	TextConditioner string // text_conditioner
-	VocabJson       string // vocab_json
-	TokenScoresJson string // token_scores_json
+	LmFlow                      string // lm_flow
+	LmMain                      string // lm_main
+	Encoder                     string // encoder
+	Decoder                     string // decoder
+	TextConditioner             string // text_conditioner
+	VocabJson                   string // vocab_json
+	TokenScoresJson             string // token_scores_json
+	VoiceEmbeddingCacheCapacity int    // voice_embedding_cache_capacity
 }
 
 type OfflineTtsZipvoiceModelConfig struct {
@@ -902,13 +918,24 @@ type OfflineTtsZipvoiceModelConfig struct {
 	GuidanceScale float32 // CFG scale
 }
 
+type OfflineTtsSupertonicModelConfig struct {
+	DurationPredictor string // Path to duration_predictor.onnx
+	TextEncoder       string // Path to text_encoder.onnx
+	VectorEstimator   string // Path to vector_estimator.onnx
+	Vocoder           string // Path to vocoder.onnx
+	TtsJson           string // Path to tts.json
+	UnicodeIndexer    string // Path to unicode_indexer.bin
+	VoiceStyle        string // Path to voice.bin
+}
+
 type OfflineTtsModelConfig struct {
-	Vits     OfflineTtsVitsModelConfig
-	Matcha   OfflineTtsMatchaModelConfig
-	Kokoro   OfflineTtsKokoroModelConfig
-	Kitten   OfflineTtsKittenModelConfig
-	Zipvoice OfflineTtsZipvoiceModelConfig
-	Pocket   OfflineTtsPocketModelConfig
+	Vits       OfflineTtsVitsModelConfig
+	Matcha     OfflineTtsMatchaModelConfig
+	Kokoro     OfflineTtsKokoroModelConfig
+	Kitten     OfflineTtsKittenModelConfig
+	Zipvoice   OfflineTtsZipvoiceModelConfig
+	Pocket     OfflineTtsPocketModelConfig
+	Supertonic OfflineTtsSupertonicModelConfig
 
 	// Number of threads to use for neural network computation
 	NumThreads int
@@ -1169,6 +1196,30 @@ func NewOfflineTts(config *OfflineTtsConfig) *OfflineTts {
 
 	c.model.pocket.token_scores_json = C.CString(config.Model.Pocket.TokenScoresJson)
 	defer C.free(unsafe.Pointer(c.model.pocket.token_scores_json))
+
+	c.model.pocket.voice_embedding_cache_capacity = C.int(config.Model.Pocket.VoiceEmbeddingCacheCapacity)
+
+	// supertonic
+	c.model.supertonic.duration_predictor = C.CString(config.Model.Supertonic.DurationPredictor)
+	defer C.free(unsafe.Pointer(c.model.supertonic.duration_predictor))
+
+	c.model.supertonic.text_encoder = C.CString(config.Model.Supertonic.TextEncoder)
+	defer C.free(unsafe.Pointer(c.model.supertonic.text_encoder))
+
+	c.model.supertonic.vector_estimator = C.CString(config.Model.Supertonic.VectorEstimator)
+	defer C.free(unsafe.Pointer(c.model.supertonic.vector_estimator))
+
+	c.model.supertonic.vocoder = C.CString(config.Model.Supertonic.Vocoder)
+	defer C.free(unsafe.Pointer(c.model.supertonic.vocoder))
+
+	c.model.supertonic.tts_json = C.CString(config.Model.Supertonic.TtsJson)
+	defer C.free(unsafe.Pointer(c.model.supertonic.tts_json))
+
+	c.model.supertonic.unicode_indexer = C.CString(config.Model.Supertonic.UnicodeIndexer)
+	defer C.free(unsafe.Pointer(c.model.supertonic.unicode_indexer))
+
+	c.model.supertonic.voice_style = C.CString(config.Model.Supertonic.VoiceStyle)
+	defer C.free(unsafe.Pointer(c.model.supertonic.voice_style))
 
 	c.model.num_threads = C.int(config.Model.NumThreads)
 	c.model.debug = C.int(config.Model.Debug)

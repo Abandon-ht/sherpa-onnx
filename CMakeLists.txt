@@ -1,5 +1,5 @@
 if (CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.0")
-  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
 endif()
 
 cmake_minimum_required(VERSION 3.15 FATAL_ERROR)
@@ -19,7 +19,7 @@ project(sherpa-onnx)
 # Remember to update
 # ./CHANGELOG.md
 # ./new-release.sh
-set(SHERPA_ONNX_VERSION "1.12.24")
+set(SHERPA_ONNX_VERSION "1.12.29")
 
 # Disable warning about
 #
@@ -291,7 +291,7 @@ if(SHERPA_ONNX_ENABLE_TTS)
   message(STATUS "TTS is enabled")
   add_definitions(-DSHERPA_ONNX_ENABLE_TTS=1)
 else()
-  message(WARNING "TTS is disabled")
+  message(STATUS "TTS is disabled")
   add_definitions(-DSHERPA_ONNX_ENABLE_TTS=0)
 endif()
 
@@ -299,7 +299,7 @@ if(SHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION)
   message(STATUS "speaker diarization is enabled")
   add_definitions(-DSHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=1)
 else()
-  message(WARNING "speaker diarization is disabled")
+  message(STATUS "speaker diarization is disabled")
   add_definitions(-DSHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=0)
 endif()
 
