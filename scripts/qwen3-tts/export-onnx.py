@@ -68,7 +68,7 @@ def export_text_project(model, output_dir, opset_version=14):
     class TextProject(nn.Module):
         def __init__(self, talker):
             super().__init__()
-            self.text_embed = talker.model.text_embed_tokens
+            self.text_embed = talker.model.text_embedding
             self.text_projection = talker.text_projection
 
         def forward(self, input_ids):
@@ -105,7 +105,7 @@ def export_codec_embed(model, output_dir, opset_version=14):
     class CodecEmbed(nn.Module):
         def __init__(self, talker):
             super().__init__()
-            self.embed_tokens = talker.model.embed_tokens
+            self.embed_tokens = talker.model.codec_embedding
 
         def forward(self, token_ids):
             return self.embed_tokens(token_ids)
@@ -171,6 +171,7 @@ def export_code_predictor_embed(model, output_dir, opset_version=14):
         input_names=["token_id", "layer_idx"],
         output_names=["embed"],
         opset_version=opset_version,
+        dynamo=False,
     )
     print(f"  Done: code_predictor_embed.onnx ({num_groups - 1} layers)")
 
