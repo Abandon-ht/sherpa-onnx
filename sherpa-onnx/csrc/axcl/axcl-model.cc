@@ -155,6 +155,10 @@ class AxclModel::Impl {
   template <typename T>
   bool SetInputTensorData(const std::string &name, const T *p,
                           int32_t n) const {
+    if (!BindContextToCurrentThread()) {
+      return false;
+    }
+
     for (size_t i = 0; i < input_tensor_names_.size(); ++i) {
       if (input_tensor_names_[i] == name) {
         if (n * sizeof(T) != input_tensors_[i].Size()) {
@@ -184,6 +188,10 @@ class AxclModel::Impl {
   }
 
   std::vector<float> GetOutputTensorData(const std::string &name) const {
+    if (!BindContextToCurrentThread()) {
+      return {};
+    }
+
     for (size_t i = 0; i < output_tensor_names_.size(); ++i) {
       if (output_tensor_names_[i] == name) {
         size_t bytes = output_tensors_[i].Size();
@@ -209,6 +217,10 @@ class AxclModel::Impl {
   }
 
   bool Run() const {
+    if (!BindContextToCurrentThread()) {
+      return false;
+    }
+
     uint32_t group = 0;
     auto ret =
         axclrtEngineExecute(model_id_, context_id_, group, *engine_io_guard_);
@@ -223,6 +235,23 @@ class AxclModel::Impl {
   bool IsInitialized() const { return model_loaded_; }
 
  private:
+  bool BindContextToCurrentThread() const {
+    if (runtime_context_ == nullptr) {
+      SHERPA_ONNX_LOGE("runtime_context_ is null");
+      return false;
+    }
+
+    auto ret = axclrtSetCurrentContext(runtime_context_);
+    if (ret != 0) {
+      SHERPA_ONNX_LOGE(
+          "Failed to call axclrtSetCurrentContext(). Return code is: %d",
+          static_cast<int32_t>(ret));
+      return false;
+    }
+
+    return true;
+  }
+
   bool SetDevice(int32_t device_id) {
     axclrtDeviceList lst;
     auto ret = axclrtGetDeviceList(&lst);
@@ -249,6 +278,14 @@ class AxclModel::Impl {
     if (ret != 0) {
       SHERPA_ONNX_LOGE("Failed to call axclrtSetDevice(). Return code is: %d",
                        static_cast<int32_t>(ret));
+      return false;
+    }
+
+    ret = axclrtGetCurrentContext(&runtime_context_);
+    if (ret != 0) {
+      SHERPA_ONNX_LOGE(
+          "Failed to call axclrtGetCurrentContext(). Return code is: %d",
+          static_cast<int32_t>(ret));
       return false;
     }
 
@@ -379,6 +416,7 @@ class AxclModel::Impl {
 
   bool model_loaded_ = false;
   uint64_t model_id_ = 0;
+  axclrtContext runtime_context_ = nullptr;
   uint64_t context_id_ = 0;
 
   std::vector<std::string> input_tensor_names_;
