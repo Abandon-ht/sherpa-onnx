@@ -53,7 +53,7 @@ if(NOT onnxruntime_POPULATED)
 endif()
 message(STATUS "onnxruntime is downloaded to ${onnxruntime_SOURCE_DIR}")
 
-set(location_onnxruntime "${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so")
+set(location_onnxruntime "${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so.1.23.2")
 
 message(STATUS "location_onnxruntime: ${location_onnxruntime}")
 
@@ -64,6 +64,6 @@ set_target_properties(onnxruntime PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${onnxruntime_SOURCE_DIR}/include"
 )
 
-file(GLOB onnxruntime_lib_files "${onnxruntime_SOURCE_DIR}/lib/libonnxruntime*")
+file(GLOB onnxruntime_lib_files "${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so.1.23.2")
 message(STATUS "onnxruntime lib files: ${onnxruntime_lib_files}")
 install(FILES ${onnxruntime_lib_files} DESTINATION lib)
