@@ -26,6 +26,48 @@
 
 namespace sherpa_onnx {
 
+namespace {
+
+int64_t DecodeLengthFromBytes(const std::vector<uint8_t> &bytes,
+                              int32_t max_allowed) {
+  if (bytes.size() == sizeof(int32_t)) {
+    int32_t signed_value = 0;
+    uint32_t unsigned_value = 0;
+    float float_value = 0;
+
+    std::memcpy(&signed_value, bytes.data(), sizeof(signed_value));
+    std::memcpy(&unsigned_value, bytes.data(), sizeof(unsigned_value));
+    std::memcpy(&float_value, bytes.data(), sizeof(float_value));
+
+    if (0 <= signed_value && signed_value <= max_allowed) {
+      return signed_value;
+    }
+
+    if (unsigned_value <= static_cast<uint32_t>(max_allowed)) {
+      return static_cast<int64_t>(unsigned_value);
+    }
+
+    int64_t rounded_float = static_cast<int64_t>(float_value);
+    if (0 <= rounded_float && rounded_float <= max_allowed) {
+      return rounded_float;
+    }
+  } else if (bytes.size() == sizeof(int64_t)) {
+    int64_t value = 0;
+    std::memcpy(&value, bytes.data(), sizeof(value));
+    if (0 <= value && value <= max_allowed) {
+      return value;
+    }
+  }
+
+  SHERPA_ONNX_LOGE(
+      "Unsupported or invalid output length buffer. bytes: %zu, max_allowed: "
+      "%d",
+      bytes.size(), max_allowed);
+  SHERPA_ONNX_EXIT(-1);
+}
+
+}  // namespace
+
 class OfflineFireRedAsrCtcModelAxcl::Impl {
  public:
   explicit Impl(const OfflineModelConfig &config)
@@ -64,6 +106,8 @@ class OfflineFireRedAsrCtcModelAxcl::Impl {
     int32_t expected_frames = expected_shape[1];
 
     int32_t valid_frames = std::min<int32_t>(num_frames, expected_frames);
+    valid_frames = std::min<int32_t>(
+        valid_frames, static_cast<int32_t>(p_features_length[0]));
     std::vector<float> padded_features(expected_frames * feat_dim, 0.0f);
     std::copy(p_features, p_features + valid_frames * feat_dim,
               padded_features.begin());
@@ -79,8 +123,8 @@ class OfflineFireRedAsrCtcModelAxcl::Impl {
 
     auto out_logits =
         model_->GetOutputTensorData(model_->OutputTensorNames()[0]);
-    auto out_lengths =
-        model_->GetOutputTensorData(model_->OutputTensorNames()[1]);
+    auto out_length_bytes =
+        model_->GetOutputTensorBytes(model_->OutputTensorNames()[1]);
 
     auto out_shape = model_->TensorShape(model_->OutputTensorNames()[0]);
     int32_t out_frames = out_shape[1];
@@ -96,7 +140,7 @@ class OfflineFireRedAsrCtcModelAxcl::Impl {
     Ort::Value lengths = Ort::Value::CreateTensor<int64_t>(
         allocator_, lengths_shape.data(), lengths_shape.size());
     int64_t *p_lengths = lengths.GetTensorMutableData<int64_t>();
-    p_lengths[0] = static_cast<int64_t>(out_lengths[0]);
+    p_lengths[0] = DecodeLengthFromBytes(out_length_bytes, out_frames);
 
     std::vector<Ort::Value> ans;
     ans.push_back(std::move(logits));

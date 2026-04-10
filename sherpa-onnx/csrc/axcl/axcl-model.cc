@@ -4,6 +4,7 @@
 
 #include "sherpa-onnx/csrc/axcl/axcl-model.h"
 
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -187,7 +188,7 @@ class AxclModel::Impl {
     return false;
   }
 
-  std::vector<float> GetOutputTensorData(const std::string &name) const {
+  std::vector<uint8_t> GetOutputTensorBytes(const std::string &name) const {
     if (!BindContextToCurrentThread()) {
       return {};
     }
@@ -195,7 +196,7 @@ class AxclModel::Impl {
     for (size_t i = 0; i < output_tensor_names_.size(); ++i) {
       if (output_tensor_names_[i] == name) {
         size_t bytes = output_tensors_[i].Size();
-        std::vector<float> out(bytes / sizeof(float));
+        std::vector<uint8_t> out(bytes);
 
         auto ret = axclrtMemcpy(out.data(), output_tensors_[i].Get(), bytes,
                                 AXCL_MEMCPY_DEVICE_TO_HOST);
@@ -214,6 +215,24 @@ class AxclModel::Impl {
     SHERPA_ONNX_LOGE("Found no tensor with name: '%s'", name.c_str());
 
     return {};
+  }
+
+  std::vector<float> GetOutputTensorData(const std::string &name) const {
+    std::vector<uint8_t> bytes = GetOutputTensorBytes(name);
+    if (bytes.empty()) {
+      return {};
+    }
+
+    if (bytes.size() % sizeof(float) != 0) {
+      SHERPA_ONNX_LOGE(
+          "Output tensor '%s' has %zu bytes, which is not divisible by %zu",
+          name.c_str(), bytes.size(), sizeof(float));
+      return {};
+    }
+
+    std::vector<float> out(bytes.size() / sizeof(float));
+    std::memcpy(out.data(), bytes.data(), bytes.size());
+    return out;
   }
 
   bool Run() const {
@@ -470,6 +489,11 @@ bool AxclModel::SetInputTensorData(const std::string &name, const int32_t *p,
 bool AxclModel::SetInputTensorData(const std::string &name, const uint8_t *p,
                                    int32_t n) const {
   return impl_->SetInputTensorData(name, p, n);
+}
+
+std::vector<uint8_t> AxclModel::GetOutputTensorBytes(
+    const std::string &name) const {
+  return impl_->GetOutputTensorBytes(name);
 }
 
 std::vector<float> AxclModel::GetOutputTensorData(
