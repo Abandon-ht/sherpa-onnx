@@ -22,40 +22,12 @@ export PYTHONPATH=/tmp/MeloTTS:$PYTHONPATH
 
 echo "pwd: $PWD"
 
-./export-onnx.py
+./export-onnx-all.py
 
-ls -lh
-
-./show-info.py
-
-head lexicon.txt
-echo "---"
-tail lexicon.txt
-echo "---"
-head tokens.txt
-echo "---"
-tail tokens.txt
-
-./test.py
-
-mkdir zh_en
-mv -v *.onnx zh_en/
-mv -v lexicon.txt zh_en
-mv -v tokens.txt zh_en
-cp -v README.md zh_en
-
-ls -lh
-echo "---"
-ls -lh zh_en
-
-./export-onnx-en.py
-
-mkdir en
-mv -v *.onnx en/
-mv -v lexicon.txt en
-mv -v tokens.txt en
-cp -v README.md en
-
-ls -lh en
+for lang in zh_en en jp kr es fr; do
+  cp -v README.md "$lang"
+  ls -lh "$lang"
+  echo "---"
+done
 
 ls -lh
