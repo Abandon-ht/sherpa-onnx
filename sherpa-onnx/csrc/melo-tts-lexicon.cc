@@ -29,6 +29,66 @@
 
 namespace sherpa_onnx {
 
+namespace {
+
+std::string Utf8Encode(char32_t codepoint) {
+  std::string ans;
+
+  if (codepoint <= 0x7F) {
+    ans.push_back(static_cast<char>(codepoint));
+  } else if (codepoint <= 0x7FF) {
+    ans.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+    ans.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+  } else if (codepoint <= 0xFFFF) {
+    ans.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+    ans.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+    ans.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+  } else {
+    ans.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+    ans.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+    ans.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+    ans.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+  }
+
+  return ans;
+}
+
+std::string NormalizeJapaneseForMelo(const std::string &text) {
+  std::vector<std::string> words = SplitUtf8(text);
+  std::string ans;
+  ans.reserve(text.size());
+
+  for (const auto &w : words) {
+    if (w.size() == 3) {
+      const uint8_t b0 = static_cast<uint8_t>(w[0]);
+      const uint8_t b1 = static_cast<uint8_t>(w[1]);
+      const uint8_t b2 = static_cast<uint8_t>(w[2]);
+
+      // Hiragana [U+3041, U+3096] -> Katakana by adding 0x60.
+      if (b0 == 0xE3 && b1 == 0x81 && b2 >= 0x81) {
+        char32_t codepoint = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) |
+                            (b2 & 0x3F);
+        if (codepoint >= 0x3041 && codepoint <= 0x3096) {
+          ans += Utf8Encode(codepoint + 0x60);
+          continue;
+        }
+      }
+
+      // Handle the remaining Hiragana range U+3097/U+3098 if present.
+      if (w == "ゔ") {
+        ans += "ヴ";
+        continue;
+      }
+    }
+
+    ans += w;
+  }
+
+  return ans;
+}
+
+}  // namespace
+
 class MeloTtsLexicon::Impl {
  public:
   Impl(const std::string &lexicon, const std::string &tokens,
@@ -80,7 +140,11 @@ class MeloTtsLexicon::Impl {
     std::regex punct_re4("！");
     s = std::regex_replace(s, punct_re4, "!");
 
-    std::vector<std::string> words = SplitUtf8(text);
+    if (meta_data_.language == "Japanese") {
+      s = NormalizeJapaneseForMelo(s);
+    }
+
+    std::vector<std::string> words = SplitUtf8(s);
 
     if (debug_) {
 #if __OHOS__
