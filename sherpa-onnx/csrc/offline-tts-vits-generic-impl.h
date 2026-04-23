@@ -1,12 +1,12 @@
-// sherpa-onnx/csrc/offline-tts-vits-impl.h
+// sherpa-onnx/csrc/offline-tts-vits-generic-impl.h
 //
-// Copyright (c)  2023  Xiaomi Corporation
-#ifndef SHERPA_ONNX_CSRC_OFFLINE_TTS_VITS_IMPL_H_
-#define SHERPA_ONNX_CSRC_OFFLINE_TTS_VITS_IMPL_H_
+// Copyright (c)  2026  Xiaomi Corporation
+#ifndef SHERPA_ONNX_CSRC_OFFLINE_TTS_VITS_GENERIC_IMPL_H_
+#define SHERPA_ONNX_CSRC_OFFLINE_TTS_VITS_GENERIC_IMPL_H_
 
 #include <memory>
-#include <string>
 #include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -22,17 +22,16 @@
 #include "sherpa-onnx/csrc/offline-tts-character-frontend.h"
 #include "sherpa-onnx/csrc/offline-tts-frontend.h"
 #include "sherpa-onnx/csrc/offline-tts-impl.h"
-#include "sherpa-onnx/csrc/offline-tts-vits-model.h"
 #include "sherpa-onnx/csrc/piper-phonemize-lexicon.h"
 #include "sherpa-onnx/csrc/text-utils.h"
 
 namespace sherpa_onnx {
 
-class OfflineTtsVitsImpl : public OfflineTtsImpl {
+template <typename VitsModel>
+class OfflineTtsVitsGenericImpl : public OfflineTtsImpl {
  public:
-  explicit OfflineTtsVitsImpl(const OfflineTtsConfig &config)
-      : config_(config),
-        model_(std::make_unique<OfflineTtsVitsModel>(config.model)) {
+  explicit OfflineTtsVitsGenericImpl(const OfflineTtsConfig &config)
+      : config_(config), model_(std::make_unique<VitsModel>(config.model)) {
     InitFrontend();
 
     if (!config.rule_fsts.empty()) {
@@ -86,9 +85,8 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
   }
 
   template <typename Manager>
-  OfflineTtsVitsImpl(Manager *mgr, const OfflineTtsConfig &config)
-      : config_(config),
-        model_(std::make_unique<OfflineTtsVitsModel>(mgr, config.model)) {
+  OfflineTtsVitsGenericImpl(Manager *mgr, const OfflineTtsConfig &config)
+      : config_(config), model_(std::make_unique<VitsModel>(mgr, config.model)) {
     InitFrontend(mgr);
 
     if (!config.rule_fsts.empty()) {
@@ -130,8 +128,8 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
           tn_list_.push_back(
               std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
         }
-      }    // for (const auto &f : files)
-    }      // if (!config.rule_fars.empty())
+      }
+    }
   }
 
   int32_t SampleRate() const override {
@@ -142,13 +140,6 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
     return model_->GetMetaData().num_speakers;
   }
 
-  // Supported options in GenerationConfig:
-  //   - sid: Speaker ID for multi-speaker models
-  //   - speed: Speech speed factor (default: 1.0)
-  //   - silence_scale: Scale applied to pauses in the generated audio
-  //
-  // Supported extra options in config.extra:
-  //   - None
   GeneratedAudio Generate(
       const std::string &_text, const GenerationConfig &gen_config,
       GeneratedAudioCallback callback = nullptr) const override {
@@ -242,7 +233,6 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
       }
     }
 
-    // TODO(fangjun): add blank inside the frontend, not here
     if (meta_data.add_blank && config_.model.vits.data_dir.empty() &&
         meta_data.frontend != "characters") {
       for (auto &k : x) {
@@ -264,8 +254,6 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
       return ans;
     }
 
-    // the input text is too long, we process sentences within it in batches
-    // to avoid OOM. Batch size is config_.max_num_sentences
     std::vector<std::vector<int64_t>> batch_x;
     std::vector<std::vector<int64_t>> batch_tones;
 
@@ -313,24 +301,20 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
       if (callback) {
         should_continue = callback(audio.samples.data(), audio.samples.size(),
                                    (b + 1) * 1.0 / num_batches);
-        // Caution(fangjun): audio is freed when the callback returns, so users
-        // should copy the data if they want to access the data after
-        // the callback returns to avoid segmentation fault.
       }
     }
 
     batch_x.clear();
     batch_tones.clear();
-    while (k < static_cast<int32_t>(x.size()) && should_continue) {
+
+    for (; k != x_size; ++k) {
       batch_x.push_back(std::move(x[k]));
       if (!tones.empty()) {
         batch_tones.push_back(std::move(tones[k]));
       }
-
-      ++k;
     }
 
-    if (!batch_x.empty()) {
+    if (should_continue) {
       auto audio =
           Process(batch_x, batch_tones, sid, speed, gen_config.silence_scale);
       ans.sample_rate = audio.sample_rate;
@@ -338,9 +322,6 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
                          audio.samples.end());
       if (callback) {
         callback(audio.samples.data(), audio.samples.size(), 1.0);
-        // Caution(fangjun): audio is freed when the callback returns, so users
-        // should copy the data if they want to access the data after
-        // the callback returns to avoid segmentation fault.
       }
     }
 
@@ -441,6 +422,7 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
             "--vits-lexicon if you leave --vits-data-dir empty");
         SHERPA_ONNX_EXIT(-1);
       }
+
       frontend_ = std::make_unique<Lexicon>(
           config_.model.vits.lexicon, config_.model.vits.tokens,
           meta_data.punctuations, meta_data.language, config_.model.debug);
@@ -496,7 +478,6 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
         audio.GetTensorTypeAndShapeInfo().GetShape();
 
     int64_t total = 1;
-    // The output shape may be (1, 1, total) or (1, total) or (total,)
     for (auto i : audio_shape) {
       total *= i;
     }
@@ -516,10 +497,11 @@ class OfflineTtsVitsImpl : public OfflineTtsImpl {
 
  private:
   OfflineTtsConfig config_;
-  std::unique_ptr<OfflineTtsVitsModel> model_;
+  std::unique_ptr<VitsModel> model_;
   std::vector<std::unique_ptr<kaldifst::TextNormalizer>> tn_list_;
   std::unique_ptr<OfflineTtsFrontend> frontend_;
 };
 
 }  // namespace sherpa_onnx
-#endif  // SHERPA_ONNX_CSRC_OFFLINE_TTS_VITS_IMPL_H_
+
+#endif  // SHERPA_ONNX_CSRC_OFFLINE_TTS_VITS_GENERIC_IMPL_H_

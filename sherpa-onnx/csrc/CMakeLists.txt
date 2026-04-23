@@ -121,6 +121,7 @@ set(sources
   online-transducer-nemo-model.cc
   online-wenet-ctc-model-config.cc
   online-wenet-ctc-model.cc
+  online-zipformer-meta-config.cc
   online-zipformer-transducer-model.cc
   online-zipformer2-ctc-model-config.cc
   online-zipformer2-ctc-model.cc
@@ -211,9 +212,20 @@ endif()
 if(SHERPA_ONNX_ENABLE_AXERA)
   list(APPEND sources
     ./axera/ax-engine-guard.cc
+    ./axera/offline-fire-red-asr-ctc-model-axera.cc
     ./axera/offline-sense-voice-model-axera.cc
+    ./axera/online-stream-axera.cc
+    ./axera/online-transducer-greedy-search-decoder-axera.cc
+    ./axera/online-transducer-modified-beam-search-decoder-axera.cc
+    ./axera/online-zipformer-transducer-model-axera.cc
     ./axera/utils.cc
   )
+  if(SHERPA_ONNX_ENABLE_TTS)
+    list(APPEND sources
+      ./axera/offline-tts-kokoro-model-axera.cc
+      ./axera/offline-tts-vits-model-axera.cc
+    )
+  endif()
 endif()
 
 if(SHERPA_ONNX_ENABLE_AXCL)
@@ -224,8 +236,15 @@ if(SHERPA_ONNX_ENABLE_AXCL)
     ./axcl/axcl-manager.cc
     ./axcl/axcl-model.cc
     ./axcl/offline-sense-voice-model-axcl.cc
+    ./axcl/offline-fire-red-asr-ctc-model-axcl.cc
     ./axcl/utils.cc
   )
+  if(SHERPA_ONNX_ENABLE_TTS)
+    list(APPEND sources
+      ./axcl/offline-tts-kokoro-model-axcl.cc
+      ./axcl/offline-tts-vits-model-axcl.cc
+    )
+  endif()
 endif()
 
 if(SHERPA_ONNX_ENABLE_RKNN OR SHERPA_ONNX_ENABLE_ASCEND_NPU OR SHERPA_ONNX_ENABLE_QNN OR SHERPA_ONNX_ENABLE_AXERA OR SHERPA_ONNX_ENABLE_AXCL)
