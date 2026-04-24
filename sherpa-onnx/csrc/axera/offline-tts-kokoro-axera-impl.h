@@ -154,9 +154,28 @@ class OfflineTtsKokoroAxeraImpl : public OfflineTtsImpl {
     return model_->GetMetaData().num_speakers;
   }
 
+  // Supported options in GenerationConfig:
+  //   - sid: Speaker ID for multi-speaker models
+  //   - speed: Speech speed factor. If left at 1.0, it falls back to the
+  //            default implied by kokoro.length_scale.
+  //
+  // Supported extra options in config.extra:
+  //   - lang: Language override for Kokoro >= 1.0. Defaults to
+  //           kokoro.lang if provided, otherwise meta_data.voice.
   GeneratedAudio Generate(
-      const std::string &_text, int64_t sid = 0, float speed = 1.0,
+      const std::string &_text, const GenerationConfig &gen_config,
       GeneratedAudioCallback callback = nullptr) const override {
+    if (config_.model.debug) {
+      SHERPA_ONNX_LOGE("%s", gen_config.ToString().c_str());
+    }
+
+    int64_t sid = gen_config.sid;
+    float speed = gen_config.speed;
+    if (speed <= 0) {
+      SHERPA_ONNX_LOGE("Speed must be > 0. Given: %f", speed);
+      return {};
+    }
+
     const auto &meta_data = model_->GetMetaData();
     int32_t num_speakers = meta_data.num_speakers;
 
@@ -225,9 +244,13 @@ class OfflineTtsKokoroAxeraImpl : public OfflineTtsImpl {
       }
     }
 
-    std::vector<TokenIDs> token_ids = frontend_->ConvertTextToTokenIds(
-        text, config_.model.kokoro.lang.empty() ? meta_data.voice
-                                                : config_.model.kokoro.lang);
+    std::string lang = gen_config.GetExtraString("lang");
+    if (lang.empty()) {
+      lang = config_.model.kokoro.lang.empty() ? meta_data.voice
+                                               : config_.model.kokoro.lang;
+    }
+
+    std::vector<TokenIDs> token_ids = frontend_->ConvertTextToTokenIds(text, lang);
 
     if (token_ids.empty() ||
         (token_ids.size() == 1 && token_ids[0].tokens.empty())) {
@@ -241,7 +264,6 @@ class OfflineTtsKokoroAxeraImpl : public OfflineTtsImpl {
     }
 
     std::vector<std::vector<int64_t>> x;
-
     x.reserve(token_ids.size());
 
     for (auto &i : token_ids) {
@@ -263,8 +285,6 @@ class OfflineTtsKokoroAxeraImpl : public OfflineTtsImpl {
 #endif
     }
 
-    // the input text is too long, we process sentences within it in batches
-    // to avoid OOM. Batch size is config_.max_num_sentences
     std::vector<std::vector<int64_t>> batch_x;
 
     int32_t batch_size = 1;
@@ -288,7 +308,6 @@ class OfflineTtsKokoroAxeraImpl : public OfflineTtsImpl {
     GeneratedAudio ans;
 
     int32_t should_continue = 1;
-
     int32_t k = 0;
 
     for (int32_t b = 0; b != num_batches && should_continue; ++b) {
@@ -304,16 +323,12 @@ class OfflineTtsKokoroAxeraImpl : public OfflineTtsImpl {
       if (callback) {
         should_continue = callback(audio.samples.data(), audio.samples.size(),
                                    (b + 1) * 1.0 / num_batches);
-        // Caution(fangjun): audio is freed when the callback returns, so users
-        // should copy the data if they want to access the data after
-        // the callback returns to avoid segmentation fault.
       }
     }
 
     batch_x.clear();
     while (k < static_cast<int32_t>(x.size()) && should_continue) {
       batch_x.push_back(std::move(x[k]));
-
       ++k;
     }
 
@@ -324,13 +339,25 @@ class OfflineTtsKokoroAxeraImpl : public OfflineTtsImpl {
                          audio.samples.end());
       if (callback) {
         callback(audio.samples.data(), audio.samples.size(), 1.0);
-        // Caution(fangjun): audio is freed when the callback returns, so users
-        // should copy the data if they want to access the data after
-        // the callback returns to avoid segmentation fault.
       }
     }
 
     return ans;
+  }
+
+  [[deprecated("Use Generate(text, GenerationConfig, callback) instead")]]
+  GeneratedAudio Generate(
+      const std::string &_text, int64_t sid = 0, float speed = 1.0,
+      GeneratedAudioCallback callback = nullptr) const override {
+    GenerationConfig gen_config;
+    gen_config.sid = sid;
+    gen_config.speed = speed;
+    gen_config.silence_scale = config_.silence_scale;
+    if (!config_.model.kokoro.lang.empty()) {
+      gen_config.extra["lang"] = config_.model.kokoro.lang;
+    }
+
+    return Generate(_text, gen_config, std::move(callback));
   }
 
  private:
