@@ -274,6 +274,9 @@ class ModelWrapper(torch.nn.Module):
         noise_scale_w,
         max_len=None,
     ):
+        # Keep x_lengths as a real dependency so export keeps this input.
+        x = x + (x_lengths.to(x.dtype).sum() * 0).reshape(1, 1)
+
         bert = torch.zeros(x.shape[0], 1024, x.shape[1], dtype=torch.float32)
         ja_bert = torch.zeros(x.shape[0], 768, x.shape[1], dtype=torch.float32)
         lang_id = torch.zeros_like(x)
