@@ -133,6 +133,39 @@ export CPLUS_INCLUDE_PATH="$AXERA_SDK_ROOT/include:$CPLUS_INCLUDE_PATH"
 
 export SHERPA_ONNX_AXERA_LIB_DIR="$AXERA_SDK_ROOT/lib"
 
+# ---------------------------------------------------------------------------
+# Auto-detect AX_LLM_ROOT for Qwen3-ASR ax-llm decoder integration
+# ---------------------------------------------------------------------------
+if [ -z "$AX_LLM_ROOT" ]; then
+  # Try common locations
+  _candidates=(
+    "$PWD/../ax-llm"
+    "$PWD/../../AXERA/ax-llm"
+    "$PWD/../AXERA/ax-llm"
+    "/home/$USER/Workspace/AXERA/ax-llm"
+  )
+  for _cand in "${_candidates[@]}"; do
+    if [ -f "$_cand/build/install/lib/libaxllm_static.a" ] || [ -f "$_cand/build_aarch64/install/lib/libaxllm_static.a" ]; then
+      export AX_LLM_ROOT="$_cand"
+      print_info "Auto-detected AX_LLM_ROOT=$AX_LLM_ROOT"
+      break
+    fi
+  done
+fi
+
+if [ -n "$AX_LLM_ROOT" ]; then
+  if [ ! -f "$AX_LLM_ROOT/build/install/lib/libaxllm_static.a" ] && [ ! -f "$AX_LLM_ROOT/build_aarch64/install/lib/libaxllm_static.a" ]; then
+    print_warn "AX_LLM_ROOT=$AX_LLM_ROOT does not contain libaxllm_static.a"
+    print_warn "Please build ax-llm first: cd \$AX_LLM_ROOT && ./build_ax650.sh"
+  else
+    print_info "AX_LLM_ROOT=$AX_LLM_ROOT will be used for qwen3-asr ax-llm decoder"
+  fi
+else
+  print_warn "AX_LLM_ROOT is not set. ax-llm decoder for qwen3-asr will NOT be enabled."
+  print_warn "To enable it, set AX_LLM_ROOT before running this script, e.g.:"
+  print_warn "  export AX_LLM_ROOT=/path/to/ax-llm"
+fi
+
 if command -v aarch64-none-linux-gnu-gcc  &> /dev/null; then
   ln -svf $(which aarch64-none-linux-gnu-gcc) ./aarch64-linux-gnu-gcc
   ln -svf $(which aarch64-none-linux-gnu-g++) ./aarch64-linux-gnu-g++

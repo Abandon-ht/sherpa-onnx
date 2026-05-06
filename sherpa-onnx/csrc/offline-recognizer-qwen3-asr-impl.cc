@@ -36,6 +36,18 @@ namespace sherpa_onnx {
 
 namespace {
 
+inline unsigned short float_to_bfloat16(float f) {
+  union {
+    float f;
+    uint32_t u;
+  } conv;
+  conv.f = f;
+  if ((conv.u & 0x00010000) != 0) {
+    conv.u += 0x00010000;
+  }
+  return static_cast<unsigned short>(conv.u >> 16);
+}
+
 // Mel-frame chunk length (in frames) assumed by the Qwen3-ASR conv frontend
 // when mapping log-mel features to audio tokens. Must match the chunk size
 // baked into the exported ONNX graph; used by FeatToAudioTokensLen() to size
@@ -326,6 +338,13 @@ OfflineRecognizerQwen3ASRTplImpl<ModelType>::OfflineRecognizerQwen3ASRTplImpl(
           config.model_config.qwen3_asr.tokenizer)),
       rng_(config.model_config.qwen3_asr.seed) {
   InitPromptTemplateIds();
+  if (config_.model_config.provider == "axera") {
+    if (!model_->InitDecoder(config.model_config.qwen3_asr.decoder,
+                             config.model_config.qwen3_asr.max_new_tokens)) {
+      SHERPA_ONNX_LOGE("Failed to init Axera decoder for qwen3-asr");
+      SHERPA_ONNX_EXIT(-1);
+    }
+  }
 }
 
 template <typename ModelType>
@@ -339,6 +358,13 @@ OfflineRecognizerQwen3ASRTplImpl<ModelType>::OfflineRecognizerQwen3ASRTplImpl(
           mgr, config.model_config.qwen3_asr.tokenizer)),
       rng_(config.model_config.qwen3_asr.seed) {
   InitPromptTemplateIds();
+  if (config_.model_config.provider == "axera") {
+    if (!model_->InitDecoder(config.model_config.qwen3_asr.decoder,
+                             config.model_config.qwen3_asr.max_new_tokens)) {
+      SHERPA_ONNX_LOGE("Failed to init Axera decoder for qwen3-asr");
+      SHERPA_ONNX_EXIT(-1);
+    }
+  }
 }
 
 template <typename ModelType>
@@ -676,14 +702,175 @@ OfflineRecognitionResult OfflineRecognizerQwen3ASRTplImpl<ModelType>::GenerateTe
     OfflineStream *stream) const {
   OfflineRecognitionResult result;
 
-  // Phase-1 stub for Axera backend: skip LLM decoding and return empty text.
-  // This allows us to verify conv_frontend + encoder correctness first.
   if (config_.model_config.provider == "axera") {
     if (config_.model_config.debug) {
-      SHERPA_ONNX_LOGE(
-          "qwen3-asr: Axera backend Phase-1 stub, skipping LLM decode");
+      SHERPA_ONNX_LOGE("qwen3-asr: Axera backend decoding");
     }
-    result.text = "";
+
+    int32_t max_new_tokens_ax =
+        stream->GetOptionInt("max_new_tokens",
+                             config_.model_config.qwen3_asr.max_new_tokens);
+    if (max_new_tokens_ax <= 0) {
+      max_new_tokens_ax = config_.model_config.qwen3_asr.max_new_tokens;
+    }
+
+    Ort::Value trimmed_audio_features =
+        TrimAudioFeatures(std::move(audio_features), model_->Allocator());
+
+    auto trimmed_shape =
+        trimmed_audio_features.GetTensorTypeAndShapeInfo().GetShape();
+    if (trimmed_shape.size() == 3 && trimmed_shape[1] > 0) {
+      audio_token_len = std::min<int32_t>(
+          audio_token_len, static_cast<int32_t>(trimmed_shape[1]));
+    }
+
+    if (audio_token_len <= 0) {
+      result.text = "";
+      return result;
+    }
+
+    const std::string hotwords = Qwen3FormatHotwordsForPrompt(
+        stream->HasOption("hotwords")
+            ? stream->GetOption("hotwords")
+            : config_.model_config.qwen3_asr.hotwords);
+
+    std::string language;
+    if (stream->HasOption("language")) {
+      language = stream->GetOption("language");
+    }
+
+    int32_t before_len = 0;
+    int32_t fake_audio_token_len = 0;
+    std::vector<int64_t> source_ids = BuildSourceIds(
+        hotwords, language, audio_token_len, &before_len, &fake_audio_token_len);
+
+    int32_t context_len = static_cast<int32_t>(source_ids.size());
+    if (context_len == 0) {
+      result.text = "";
+      return result;
+    }
+
+    // Truncate if needed (same logic as ONNX path)
+    int32_t max_seq_len = model_->GetMaxTotalLen();
+    const int32_t max_total_len_opt = stream->GetOptionInt(
+        "max_total_len", config_.model_config.qwen3_asr.max_total_len);
+    if (max_total_len_opt > 0) {
+      max_seq_len = std::min(max_seq_len, max_total_len_opt);
+    }
+
+    if (context_len > max_seq_len) {
+      const int32_t one_audio_len =
+          static_cast<int32_t>(audio_pad_ids_.size());
+      if (one_audio_len <= 0) {
+        result.text = "";
+        return result;
+      }
+      int32_t after_len =
+          context_len - before_len - fake_audio_token_len * one_audio_len;
+      if (after_len < 0) after_len = 0;
+      int32_t keep_audio =
+          (max_seq_len - before_len - after_len) / one_audio_len;
+      if (keep_audio < 0) {
+        result.text = "";
+        return result;
+      }
+      if (keep_audio == 0) {
+        result.text = "";
+        return result;
+      }
+      if (keep_audio < fake_audio_token_len) {
+        std::vector<int64_t> ids_before(source_ids.begin(),
+                                        source_ids.begin() + before_len);
+        std::vector<int64_t> ids_after(source_ids.end() - after_len,
+                                       source_ids.end());
+        source_ids.clear();
+        source_ids.reserve(before_len + keep_audio * one_audio_len +
+                           after_len);
+        source_ids.insert(source_ids.end(), ids_before.begin(),
+                          ids_before.end());
+        for (int32_t i = 0; i < keep_audio; ++i) {
+          source_ids.insert(source_ids.end(), audio_pad_ids_.begin(),
+                            audio_pad_ids_.end());
+        }
+        source_ids.insert(source_ids.end(), ids_after.begin(), ids_after.end());
+        fake_audio_token_len = keep_audio;
+        audio_token_len = keep_audio;
+        context_len = static_cast<int32_t>(source_ids.size());
+        trimmed_audio_features = TruncateAudioFeatures(
+            std::move(trimmed_audio_features), keep_audio, model_->Allocator());
+      }
+    }
+
+    // 1. Lookup text embeddings
+    std::vector<float> text_embed = model_->GetTextEmbedding(source_ids);
+    if (text_embed.empty()) {
+      SHERPA_ONNX_LOGE("Failed to get text embeddings");
+      result.text = "";
+      return result;
+    }
+
+    const int32_t hidden_size =
+        static_cast<int32_t>(text_embed.size()) / context_len;
+    if (hidden_size <= 0 || text_embed.size() !=
+                                 static_cast<size_t>(context_len) * hidden_size) {
+      SHERPA_ONNX_LOGE("Embedding size mismatch");
+      result.text = "";
+      return result;
+    }
+
+    // 2. Insert audio_features into text_embed at audio_pad positions
+    auto audio_info = trimmed_audio_features.GetTensorTypeAndShapeInfo();
+    auto audio_shape = audio_info.GetShape();
+    auto audio_type =
+        static_cast<ONNXTensorElementDataType>(audio_info.GetElementType());
+
+    if (audio_shape.size() == 3 && audio_shape[0] == 1 &&
+        audio_shape[2] == hidden_size &&
+        audio_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      const int32_t A = static_cast<int32_t>(audio_shape[1]);
+      const float *audio_data = trimmed_audio_features.GetTensorData<float>();
+
+      const int32_t audio_pad_start = before_len;
+      const int32_t audio_pad_count = audio_token_len;
+
+      for (int32_t i = 0; i < audio_pad_count && i < A; ++i) {
+        int32_t dst_offset = (audio_pad_start + i) * hidden_size;
+        int32_t src_offset = i * hidden_size;
+        std::memcpy(text_embed.data() + dst_offset,
+                    audio_data + src_offset,
+                    hidden_size * sizeof(float));
+      }
+    } else {
+      if (config_.model_config.debug) {
+        SHERPA_ONNX_LOGE(
+            "Axera: audio_features shape mismatch or wrong dtype, "
+            "expected [1,%d,%d] float32",
+            audio_token_len, hidden_size);
+      }
+    }
+
+    // 3. float32 -> bfloat16
+    std::vector<unsigned short> combined_embed_bf16(text_embed.size());
+    for (size_t i = 0; i < text_embed.size(); ++i) {
+      combined_embed_bf16[i] = float_to_bfloat16(text_embed[i]);
+    }
+
+    // 4. Decode
+    result.text = model_->DecodeFromEmbed(combined_embed_bf16, context_len,
+                                          hidden_size, max_new_tokens_ax);
+
+    // Post-process: strip scaffold prefix if present
+    if (!result.text.empty()) {
+      // DecodeFromEmbed returns raw decoded text; ax-llm's tokenizer may
+      // include prompt scaffold. We try to strip known prefixes.
+      const std::string kAssistantPrefix = "<|im_start|>assistant\n";
+      auto pos = result.text.find(kAssistantPrefix);
+      if (pos != std::string::npos) {
+        result.text = result.text.substr(pos + kAssistantPrefix.size());
+      }
+      RemoveUtf8ReplacementChars(&result.text);
+    }
+
     return result;
   }
 

@@ -427,6 +427,26 @@ if(SHERPA_ONNX_ENABLE_AXERA)
       pthread
     )
   endif()
+
+  # 新增 ax-llm 支持（通过环境变量 AX_LLM_ROOT 指定路径）
+  if(DEFINED ENV{AX_LLM_ROOT})
+    if(EXISTS $ENV{AX_LLM_ROOT}/build/install/lib/libaxllm_static.a)
+      set(AX_LLM_BUILD_DIR $ENV{AX_LLM_ROOT}/build)
+    else()
+      set(AX_LLM_BUILD_DIR $ENV{AX_LLM_ROOT}/build_aarch64)
+    endif()
+    target_include_directories(sherpa-onnx-core PRIVATE
+      $ENV{AX_LLM_ROOT}/src
+      $ENV{AX_LLM_ROOT}/src/runner
+      $ENV{AX_LLM_ROOT}/src/runner/utils
+      $ENV{AX_LLM_ROOT}/third_party/tokenizer.axera/include
+      $ENV{AX_LLM_ROOT}/third_party/magic_enum/include
+    )
+    target_link_libraries(sherpa-onnx-core
+      -L${AX_LLM_BUILD_DIR}/install/lib
+      axllm_static tokenizer openai_api simplecv
+    )
+  endif()
 endif()
 
 if(SHERPA_ONNX_ENABLE_AXCL)

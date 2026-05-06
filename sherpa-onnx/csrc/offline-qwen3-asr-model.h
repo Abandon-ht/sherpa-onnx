@@ -91,6 +91,24 @@ class OfflineQwen3ASRModel {
    */
   OrtAllocator *Allocator() const;
 
+  // Stubs for API compatibility with OfflineQwen3ASRModelAxera.
+  // These are no-ops for the ONNX backend; decoding is done via ForwardLLM.
+  bool InitDecoder(const std::string & /*model_dir*/,
+                   int32_t /*max_new_tokens*/) {
+    return true;
+  }
+  void ReleaseDecoder() {}
+  std::string DecodeFromEmbed(
+      const std::vector<unsigned short> & /*combined_embed*/,
+      int32_t /*seq_len*/, int32_t /*hidden_size*/,
+      int32_t /*max_new_tokens*/) const {
+    return "";
+  }
+  std::vector<float> GetTextEmbedding(
+      const std::vector<int64_t> & /*input_ids*/) const {
+    return {};
+  }
+
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;

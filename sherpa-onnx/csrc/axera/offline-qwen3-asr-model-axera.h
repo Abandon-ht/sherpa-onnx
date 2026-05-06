@@ -63,6 +63,23 @@ class OfflineQwen3ASRModelAxera {
   int32_t GetMaxTotalLen() const;
   OrtAllocator *Allocator() const;
 
+  // Phase 2: Decoder (ax-llm) integration
+  // Initialize/Release ax-llm decoder.
+  // model_dir: directory containing config.json and axmodel files.
+  bool InitDecoder(const std::string &model_dir, int32_t max_new_tokens);
+  void ReleaseDecoder();
+
+  // One-shot decode: input is combined embedding [S, hidden_size] in bfloat16.
+  // Returns the decoded recognition text.
+  std::string DecodeFromEmbed(const std::vector<unsigned short> &combined_embed,
+                              int32_t seq_len, int32_t hidden_size,
+                              int32_t max_new_tokens) const;
+
+  // Look up token embeddings from the loaded embedding table.
+  // Returns float32 embeddings of shape [input_ids.size(), hidden_size].
+  std::vector<float> GetTextEmbedding(
+      const std::vector<int64_t> &input_ids) const;
+
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;

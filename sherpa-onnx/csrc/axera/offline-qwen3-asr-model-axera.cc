@@ -28,11 +28,40 @@
 #include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
 
+#if __has_include("runner/LLM.hpp")
+#include "runner/LLM.hpp"  // ax-llm
+#define SHERPA_ONNX_HAS_AX_LLM 1
+#else
+#define SHERPA_ONNX_HAS_AX_LLM 0
+#endif
+
 namespace sherpa_onnx {
 
 namespace {
 
 constexpr int32_t kMelDim = 128;
+
+inline unsigned short float_to_bfloat16(float f) {
+  union {
+    float f;
+    uint32_t u;
+  } conv;
+  conv.f = f;
+  // 简单的舍入：检查第 16 位（bf16 尾数的最低位的下一位）
+  if ((conv.u & 0x00010000) != 0) {
+    conv.u += 0x00010000;
+  }
+  return static_cast<unsigned short>(conv.u >> 16);
+}
+
+inline float bfloat16_to_float(unsigned short v) {
+  union {
+    float f;
+    uint32_t u;
+  } conv;
+  conv.u = static_cast<uint32_t>(v) << 16;
+  return conv.f;
+}
 
 void ValidateAxModelInputShape(AX_ENGINE_IO_INFO_T *io_info,
                                const char *name,
@@ -182,6 +211,7 @@ class OfflineQwen3ASRModelAxera::Impl {
   }
 
   ~Impl() {
+    ReleaseDecoder();
     FreeIO(&conv_io_data_);
     FreeIO(&encoder_io_data_);
     if (conv_handle_) AX_ENGINE_DestroyHandle(conv_handle_);
@@ -349,6 +379,289 @@ class OfflineQwen3ASRModelAxera::Impl {
 
   OrtAllocator *Allocator() { return allocator_; }
 
+  // Phase 2: Decoder (ax-llm) integration
+  bool InitDecoder(const std::string &model_dir, int32_t max_new_tokens) {
+#if SHERPA_ONNX_HAS_AX_LLM
+    if (decoder_inited_) {
+      return true;
+    }
+
+    llm_ = std::make_unique<LLM>();
+    if (!llm_) {
+      SHERPA_ONNX_LOGE("Failed to create LLM instance");
+      return false;
+    }
+
+    LLMAttrType attr;
+    if (!LoadLlmConfig(model_dir, attr)) {
+      SHERPA_ONNX_LOGE("Failed to load LLM config from %s", model_dir.c_str());
+      llm_.reset();
+      return false;
+    }
+
+    // Do not set runing_callback to keep silent during decode.
+    // If debug is needed, we can add it later.
+
+    if (!llm_->Init(attr)) {
+      SHERPA_ONNX_LOGE("LLM::Init failed");
+      llm_.reset();
+      return false;
+    }
+
+    // Load embedding table for manual lookup.
+    // filename_tokens_embed has already been resolved to absolute path
+    // in LoadLlmConfig().
+    if (!LoadEmbedTable(attr.filename_tokens_embed, attr.tokens_embed_num,
+                        attr.tokens_embed_size)) {
+      SHERPA_ONNX_LOGE("Failed to load embed table from %s",
+                       attr.filename_tokens_embed.c_str());
+      llm_->Deinit();
+      llm_.reset();
+      return false;
+    }
+
+    embed_token_num_ = attr.tokens_embed_num;
+    embed_hidden_size_ = attr.tokens_embed_size;
+    decoder_inited_ = true;
+
+    if (config_.debug) {
+      SHERPA_ONNX_LOGE("Qwen3ASR Axera decoder init done. embed_num=%d hidden=%d",
+                       embed_token_num_, embed_hidden_size_);
+    }
+    return true;
+#else
+    SHERPA_ONNX_LOGE("ax-llm is not available at compile time");
+    return false;
+#endif
+  }
+
+  void ReleaseDecoder() {
+#if SHERPA_ONNX_HAS_AX_LLM
+    if (llm_) {
+      llm_->Deinit();
+      llm_.reset();
+    }
+    embed_data_.clear();
+    embed_token_num_ = 0;
+    embed_hidden_size_ = 0;
+    decoder_inited_ = false;
+#endif
+  }
+
+  std::string DecodeFromEmbed(const std::vector<unsigned short> &combined_embed,
+                              int32_t seq_len, int32_t hidden_size,
+                              int32_t max_new_tokens) const {
+#if SHERPA_ONNX_HAS_AX_LLM
+    if (!decoder_inited_ || !llm_) {
+      SHERPA_ONNX_LOGE("DecodeFromEmbed: decoder not initialized");
+      return "";
+    }
+
+    if (seq_len <= 0 || hidden_size <= 0 ||
+        static_cast<int32_t>(combined_embed.size()) != seq_len * hidden_size) {
+      SHERPA_ONNX_LOGE(
+          "DecodeFromEmbed: invalid shape, combined_embed.size=%zu, "
+          "expected seq_len*hidden_size=%d",
+          combined_embed.size(), seq_len * hidden_size);
+      return "";
+    }
+
+    llm_->ResetKVCache();
+
+    // LLM::Run takes a non-const reference, so we need a mutable copy.
+    std::vector<unsigned short> embed_copy = combined_embed;
+    std::string result = llm_->Run(embed_copy, max_new_tokens);
+    return result;
+#else
+    SHERPA_ONNX_LOGE("ax-llm is not available at compile time");
+    return "";
+#endif
+  }
+
+  bool IsDecoderInited() const { return decoder_inited_; }
+
+  void LookupEmbedding(const std::vector<int64_t> &input_ids,
+                       std::vector<float> *out_embed) const {
+    out_embed->clear();
+    if (embed_data_.empty() || embed_hidden_size_ <= 0) {
+      return;
+    }
+
+    out_embed->reserve(input_ids.size() * embed_hidden_size_);
+    for (int64_t id : input_ids) {
+      if (id < 0 || id >= embed_token_num_) {
+        // Use zero embedding for out-of-range tokens.
+        out_embed->insert(out_embed->end(), embed_hidden_size_, 0.0f);
+        continue;
+      }
+      size_t offset =
+          static_cast<size_t>(id) * static_cast<size_t>(embed_hidden_size_);
+      for (int32_t h = 0; h < embed_hidden_size_; ++h) {
+        out_embed->push_back(
+            bfloat16_to_float(embed_data_[offset + h]));
+      }
+    }
+  }
+
+ private:
+#if SHERPA_ONNX_HAS_AX_LLM
+  bool LoadLlmConfig(const std::string &model_dir, LLMAttrType &attr) {
+    std::string cfg_path = model_dir + "/config.json";
+    auto buf = ReadFile(cfg_path);
+    if (buf.empty()) {
+      SHERPA_ONNX_LOGE("config.json not found in %s", model_dir.c_str());
+      return false;
+    }
+
+    // Simple JSON parsing using nlohmann/json if available,
+    // otherwise manual parsing for the fields we need.
+    // Since ax-llm already includes nlohmann/json via utils/json.hpp,
+    // we try to use it. But to avoid extra dependency, we do manual parsing.
+    std::string json_str(buf.begin(), buf.end());
+
+    auto parse_string_field = [&](const std::string &key,
+                                  std::string *out) -> bool {
+      size_t pos = json_str.find("\"" + key + "\"");
+      if (pos == std::string::npos) return false;
+      pos = json_str.find(':', pos + key.size() + 2);
+      if (pos == std::string::npos) return false;
+      // skip whitespace
+      pos++;
+      while (pos < json_str.size() &&
+             (json_str[pos] == ' ' || json_str[pos] == '\t')) {
+        pos++;
+      }
+      if (pos >= json_str.size() || json_str[pos] != '"') return false;
+      pos++;
+      size_t end = json_str.find('"', pos);
+      if (end == std::string::npos) return false;
+      *out = json_str.substr(pos, end - pos);
+      return true;
+    };
+
+    auto parse_int_field = [&](const std::string &key, int *out) -> bool {
+      size_t pos = json_str.find("\"" + key + "\"");
+      if (pos == std::string::npos) return false;
+      pos = json_str.find(':', pos + key.size() + 2);
+      if (pos == std::string::npos) return false;
+      pos++;
+      while (pos < json_str.size() &&
+             (json_str[pos] == ' ' || json_str[pos] == '\t' ||
+              json_str[pos] == '\n' || json_str[pos] == '\r')) {
+        pos++;
+      }
+      if (pos >= json_str.size()) return false;
+      *out = std::atoi(json_str.c_str() + pos);
+      return true;
+    };
+
+    auto parse_bool_field = [&](const std::string &key, bool *out) -> bool {
+      size_t pos = json_str.find("\"" + key + "\"");
+      if (pos == std::string::npos) return false;
+      pos = json_str.find(':', pos + key.size() + 2);
+      if (pos == std::string::npos) return false;
+      pos++;
+      while (pos < json_str.size() &&
+             (json_str[pos] == ' ' || json_str[pos] == '\t' ||
+              json_str[pos] == '\n' || json_str[pos] == '\r')) {
+        pos++;
+      }
+      if (pos >= json_str.size()) return false;
+      std::string val;
+      while (pos < json_str.size() &&
+             (json_str[pos] == 't' || json_str[pos] == 'r' ||
+              json_str[pos] == 'u' || json_str[pos] == 'e' ||
+              json_str[pos] == 'f' || json_str[pos] == 'a' ||
+              json_str[pos] == 'l' || json_str[pos] == 's')) {
+        val.push_back(json_str[pos]);
+        pos++;
+      }
+      *out = (val == "true");
+      return true;
+    };
+
+    std::string template_filename;
+    std::string filename_post;
+    std::string url_tokenizer;
+    std::string filename_tokens_embed;
+    std::string post_config_path;
+    std::string tokenizer_type;
+    int axmodel_num = 0;
+    int tokens_embed_num = 0;
+    int tokens_embed_size = 0;
+    bool use_mmap_load_embed = false;
+    int full_attention_interval = 0;
+
+    if (!parse_string_field("template_filename_axmodel", &template_filename))
+      return false;
+    if (!parse_string_field("filename_post_axmodel", &filename_post))
+      return false;
+    if (!parse_string_field("url_tokenizer_model", &url_tokenizer))
+      return false;
+    if (!parse_string_field("filename_tokens_embed", &filename_tokens_embed))
+      return false;
+
+    parse_string_field("post_config_path", &post_config_path);
+    parse_string_field("tokenizer_type", &tokenizer_type);
+    parse_int_field("axmodel_num", &axmodel_num);
+    parse_int_field("tokens_embed_num", &tokens_embed_num);
+    parse_int_field("tokens_embed_size", &tokens_embed_size);
+    parse_bool_field("use_mmap_load_embed", &use_mmap_load_embed);
+    parse_bool_field("b_use_mmap_load_embed", &use_mmap_load_embed);
+    parse_int_field("full_attention_interval", &full_attention_interval);
+
+    attr.template_filename_axmodel =
+        ResolvePath(model_dir, template_filename);
+    attr.filename_post_axmodel = ResolvePath(model_dir, filename_post);
+    attr.url_tokenizer_model = ResolvePath(model_dir, url_tokenizer);
+    attr.filename_tokens_embed = ResolvePath(model_dir, filename_tokens_embed);
+    attr.post_config_path = ResolvePath(model_dir, post_config_path);
+    attr.tokenizer_type = tokenizer_type.empty() ? std::string("Qwen3") : tokenizer_type;
+    attr.axmodel_num = axmodel_num;
+    attr.tokens_embed_num = tokens_embed_num;
+    attr.tokens_embed_size = tokens_embed_size;
+    attr.b_use_mmap_load_embed = use_mmap_load_embed;
+    attr.full_attention_interval = full_attention_interval;
+
+    // For ASR, we don't need bos/eos handling from ax-llm tokenizer,
+    // but set defaults.
+    attr.b_bos = true;
+    attr.b_eos = false;
+
+    return true;
+  }
+
+  bool LoadEmbedTable(const std::string &path, int token_num, int hidden_size) {
+    auto buf = ReadFile(path);
+    if (buf.empty()) {
+      SHERPA_ONNX_LOGE("Failed to read embed table: %s", path.c_str());
+      return false;
+    }
+
+    size_t expected = static_cast<size_t>(token_num) *
+                      static_cast<size_t>(hidden_size) * sizeof(unsigned short);
+    if (buf.size() != expected) {
+      SHERPA_ONNX_LOGE(
+          "Embed table size mismatch: %s expected %zu bytes, got %zu",
+          path.c_str(), expected, buf.size());
+      return false;
+    }
+
+    embed_data_.resize(token_num * hidden_size);
+    std::memcpy(embed_data_.data(), buf.data(), expected);
+    return true;
+  }
+
+  static std::string ResolvePath(const std::string &base,
+                                  const std::string &p) {
+    if (p.empty()) return p;
+    if (p.rfind("http://", 0) == 0 || p.rfind("https://", 0) == 0)
+      return p;
+    if (p.front() == '/') return p;
+    return base + "/" + p;
+  }
+#endif
+
  private:
   void InitAxModel(void *model_data, size_t model_data_length,
                    const char *name, AX_ENGINE_HANDLE *handle,
@@ -381,6 +694,15 @@ class OfflineQwen3ASRModelAxera::Impl {
   AX_U32 encoder_output_bytes_ = 0;
 
   Ort::AllocatorWithDefaultOptions allocator_;
+
+  // Phase 2: Decoder (ax-llm)
+#if SHERPA_ONNX_HAS_AX_LLM
+  mutable std::unique_ptr<LLM> llm_;
+#endif
+  mutable bool decoder_inited_ = false;
+  std::vector<unsigned short> embed_data_;
+  int32_t embed_token_num_ = 0;
+  int32_t embed_hidden_size_ = 0;
 };
 
 OfflineQwen3ASRModelAxera::OfflineQwen3ASRModelAxera(
@@ -432,6 +754,27 @@ int32_t OfflineQwen3ASRModelAxera::GetMaxTotalLen() const {
 
 OrtAllocator *OfflineQwen3ASRModelAxera::Allocator() const {
   return impl_->Allocator();
+}
+
+bool OfflineQwen3ASRModelAxera::InitDecoder(const std::string &model_dir,
+                                            int32_t max_new_tokens) {
+  return impl_->InitDecoder(model_dir, max_new_tokens);
+}
+
+void OfflineQwen3ASRModelAxera::ReleaseDecoder() { impl_->ReleaseDecoder(); }
+
+std::string OfflineQwen3ASRModelAxera::DecodeFromEmbed(
+    const std::vector<unsigned short> &combined_embed, int32_t seq_len,
+    int32_t hidden_size, int32_t max_new_tokens) const {
+  return impl_->DecodeFromEmbed(combined_embed, seq_len, hidden_size,
+                                max_new_tokens);
+}
+
+std::vector<float> OfflineQwen3ASRModelAxera::GetTextEmbedding(
+    const std::vector<int64_t> &input_ids) const {
+  std::vector<float> result;
+  impl_->LookupEmbedding(input_ids, &result);
+  return result;
 }
 
 #if __ANDROID_API__ >= 9
