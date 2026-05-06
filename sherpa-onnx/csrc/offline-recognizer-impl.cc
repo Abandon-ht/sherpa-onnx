@@ -50,6 +50,7 @@
 #endif
 
 #if SHERPA_ONNX_ENABLE_AXERA
+#include "sherpa-onnx/csrc/axera/offline-qwen3-asr-model-axera.h"
 #include "sherpa-onnx/csrc/axera/offline-sense-voice-model-axera.h"
 #endif
 
@@ -109,9 +110,12 @@ std::unique_ptr<OfflineRecognizerImpl> OfflineRecognizerImpl::Create(
           config);
     } else if (!config.model_config.fire_red_asr_ctc.model.empty()) {
       return std::make_unique<OfflineRecognizerCtcImpl>(config);
+    } else if (!config.model_config.qwen3_asr.conv_frontend.empty()) {
+      return std::make_unique<
+          OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxera>>(config);
     } else {
       SHERPA_ONNX_LOGE(
-          "Only SenseVoice and FireRedASR CTC models are currently supported "
+          "Only SenseVoice, FireRedASR CTC, and Qwen3-ASR models are currently supported "
           "by Axera NPU for non-streaming ASR.");
       SHERPA_ONNX_EXIT(-1);
       return nullptr;
@@ -460,9 +464,13 @@ std::unique_ptr<OfflineRecognizerImpl> OfflineRecognizerImpl::Create(
           mgr, config);
     } else if (!config.model_config.fire_red_asr_ctc.model.empty()) {
       return std::make_unique<OfflineRecognizerCtcImpl>(mgr, config);
+    } else if (!config.model_config.qwen3_asr.conv_frontend.empty()) {
+      return std::make_unique<
+          OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxera>>(mgr,
+                                                                       config);
     } else {
       SHERPA_ONNX_LOGE(
-          "Only SenseVoice and FireRedASR CTC models are currently supported "
+          "Only SenseVoice, FireRedASR CTC, and Qwen3-ASR models are currently supported "
           "by Axera NPU for non-streaming ASR.");
       SHERPA_ONNX_EXIT(-1);
       return nullptr;

@@ -18,15 +18,21 @@
 #include "sherpa-onnx/csrc/offline-recognizer.h"
 #include "sherpa-onnx/csrc/qwen-asr-tokenizer.h"
 
+#if SHERPA_ONNX_ENABLE_AXERA
+#include "sherpa-onnx/csrc/axera/offline-qwen3-asr-model-axera.h"
+#endif
+
 namespace sherpa_onnx {
 
-class OfflineRecognizerQwen3ASRImpl : public OfflineRecognizerImpl {
+template <typename ModelType>
+class OfflineRecognizerQwen3ASRTplImpl : public OfflineRecognizerImpl {
  public:
-  explicit OfflineRecognizerQwen3ASRImpl(const OfflineRecognizerConfig &config);
+  explicit OfflineRecognizerQwen3ASRTplImpl(
+      const OfflineRecognizerConfig &config);
 
   template <typename Manager>
-  OfflineRecognizerQwen3ASRImpl(Manager *mgr,
-                                const OfflineRecognizerConfig &config);
+  OfflineRecognizerQwen3ASRTplImpl(Manager *mgr,
+                                   const OfflineRecognizerConfig &config);
 
   std::unique_ptr<OfflineStream> CreateStream() const override;
 
@@ -59,13 +65,16 @@ class OfflineRecognizerQwen3ASRImpl : public OfflineRecognizerImpl {
   void Decode(OfflineStream *stream) const;
 
   OfflineRecognizerConfig config_;
-  std::unique_ptr<OfflineQwen3ASRModel> model_;
+  std::unique_ptr<ModelType> model_;
   std::unique_ptr<QwenAsrTokenizer> tokenizer_;
   std::vector<int64_t> audio_pad_ids_;
   std::vector<int64_t> prompt_ids_after_;
   int64_t asr_text_token_id_ = -1;
   mutable std::mt19937 rng_;
 };
+
+using OfflineRecognizerQwen3ASRImpl =
+    OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModel>;
 
 }  // namespace sherpa_onnx
 

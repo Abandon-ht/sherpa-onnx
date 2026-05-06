@@ -316,35 +316,39 @@ inline void RemoveUtf8ReplacementChars(std::string *s) {
 
 }  // namespace
 
-OfflineRecognizerQwen3ASRImpl::OfflineRecognizerQwen3ASRImpl(
+template <typename ModelType>
+OfflineRecognizerQwen3ASRTplImpl<ModelType>::OfflineRecognizerQwen3ASRTplImpl(
     const OfflineRecognizerConfig &config)
     : OfflineRecognizerImpl(config),
       config_(config),
-      model_(std::make_unique<OfflineQwen3ASRModel>(config.model_config)),
+      model_(std::make_unique<ModelType>(config.model_config)),
       tokenizer_(std::make_unique<QwenAsrTokenizer>(
           config.model_config.qwen3_asr.tokenizer)),
       rng_(config.model_config.qwen3_asr.seed) {
   InitPromptTemplateIds();
 }
 
+template <typename ModelType>
 template <typename Manager>
-OfflineRecognizerQwen3ASRImpl::OfflineRecognizerQwen3ASRImpl(
+OfflineRecognizerQwen3ASRTplImpl<ModelType>::OfflineRecognizerQwen3ASRTplImpl(
     Manager *mgr, const OfflineRecognizerConfig &config)
     : OfflineRecognizerImpl(mgr, config),
       config_(config),
-      model_(std::make_unique<OfflineQwen3ASRModel>(mgr, config.model_config)),
+      model_(std::make_unique<ModelType>(mgr, config.model_config)),
       tokenizer_(std::make_unique<QwenAsrTokenizer>(
           mgr, config.model_config.qwen3_asr.tokenizer)),
       rng_(config.model_config.qwen3_asr.seed) {
   InitPromptTemplateIds();
 }
 
-std::unique_ptr<OfflineStream> OfflineRecognizerQwen3ASRImpl::CreateStream()
+template <typename ModelType>
+std::unique_ptr<OfflineStream> OfflineRecognizerQwen3ASRTplImpl<ModelType>::CreateStream()
     const {
   return std::make_unique<OfflineStream>(WhisperTag{kQwen3MelDim});
 }
 
-void OfflineRecognizerQwen3ASRImpl::InitPromptTemplateIds() {
+template <typename ModelType>
+void OfflineRecognizerQwen3ASRTplImpl<ModelType>::InitPromptTemplateIds() {
   const std::string audio_pad = "<|audio_pad|>";
   const std::string user_suffix = "<|audio_end|><|im_end|>\n";
   const std::string assistant_text = "<|im_start|>assistant\n";
@@ -364,7 +368,8 @@ void OfflineRecognizerQwen3ASRImpl::InitPromptTemplateIds() {
   }
 }
 
-std::vector<int64_t> OfflineRecognizerQwen3ASRImpl::BuildSourceIds(
+template <typename ModelType>
+std::vector<int64_t> OfflineRecognizerQwen3ASRTplImpl<ModelType>::BuildSourceIds(
     const std::string &hotwords, const std::string &language,
     int32_t audio_token_len, int32_t *before_len,
     int32_t *fake_audio_token_len) const {
@@ -414,7 +419,8 @@ std::vector<int64_t> OfflineRecognizerQwen3ASRImpl::BuildSourceIds(
   return source_ids;
 }
 
-int64_t OfflineRecognizerQwen3ASRImpl::SampleTokenFromLogitsFp16OrFp32(
+template <typename ModelType>
+int64_t OfflineRecognizerQwen3ASRTplImpl<ModelType>::SampleTokenFromLogitsFp16OrFp32(
     const void *logits, bool is_fp16, int32_t vocab_size) const {
   if (!logits || vocab_size <= 0) {
     return 0;
@@ -449,7 +455,8 @@ int64_t OfflineRecognizerQwen3ASRImpl::SampleTokenFromLogitsFp16OrFp32(
   return found_valid ? best : 0;
 }
 
-int64_t OfflineRecognizerQwen3ASRImpl::SampleTokenFromLogits(
+template <typename ModelType>
+int64_t OfflineRecognizerQwen3ASRTplImpl<ModelType>::SampleTokenFromLogits(
     const Ort::Value &logits, int32_t time_index, float temperature,
     float top_p) const {
   auto info = logits.GetTensorTypeAndShapeInfo();
@@ -491,7 +498,8 @@ int64_t OfflineRecognizerQwen3ASRImpl::SampleTokenFromLogits(
                                            temperature, top_p);
 }
 
-int64_t OfflineRecognizerQwen3ASRImpl::SampleTokenWithTemperatureAndTopP(
+template <typename ModelType>
+int64_t OfflineRecognizerQwen3ASRTplImpl<ModelType>::SampleTokenWithTemperatureAndTopP(
     const void *logits, bool is_fp16, int32_t vocab_size, float temperature,
     float top_p, int64_t avoid_id) const {
   if (!logits || vocab_size <= 0) {
@@ -662,10 +670,23 @@ int64_t OfflineRecognizerQwen3ASRImpl::SampleTokenWithTemperatureAndTopP(
   return vocab_size - 1;
 }
 
-OfflineRecognitionResult OfflineRecognizerQwen3ASRImpl::GenerateText(
+template <typename ModelType>
+OfflineRecognitionResult OfflineRecognizerQwen3ASRTplImpl<ModelType>::GenerateText(
     Ort::Value audio_features, int32_t audio_token_len,
     OfflineStream *stream) const {
   OfflineRecognitionResult result;
+
+  // Phase-1 stub for Axera backend: skip LLM decoding and return empty text.
+  // This allows us to verify conv_frontend + encoder correctness first.
+  if (config_.model_config.provider == "axera") {
+    if (config_.model_config.debug) {
+      SHERPA_ONNX_LOGE(
+          "qwen3-asr: Axera backend Phase-1 stub, skipping LLM decode");
+    }
+    result.text = "";
+    return result;
+  }
+
   auto memory_info =
       Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
   const auto &qwen3_config = config_.model_config.qwen3_asr;
@@ -1023,14 +1044,16 @@ OfflineRecognitionResult OfflineRecognizerQwen3ASRImpl::GenerateText(
   return result;
 }
 
-void OfflineRecognizerQwen3ASRImpl::DecodeStreams(OfflineStream **ss,
+template <typename ModelType>
+void OfflineRecognizerQwen3ASRTplImpl<ModelType>::DecodeStreams(OfflineStream **ss,
                                                   int32_t n) const {
   for (int32_t i = 0; i != n; ++i) {
     Decode(ss[i]);
   }
 }
 
-void OfflineRecognizerQwen3ASRImpl::Decode(OfflineStream *stream) const {
+template <typename ModelType>
+void OfflineRecognizerQwen3ASRTplImpl<ModelType>::Decode(OfflineStream *stream) const {
   auto memory_info =
       Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
 
@@ -1110,14 +1133,30 @@ void OfflineRecognizerQwen3ASRImpl::Decode(OfflineStream *stream) const {
   stream->SetResult(r);
 }
 
+template class OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModel>;
+
 #if __ANDROID_API__ >= 9
-template OfflineRecognizerQwen3ASRImpl::OfflineRecognizerQwen3ASRImpl(
+template OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModel>::OfflineRecognizerQwen3ASRTplImpl(
     AAssetManager *mgr, const OfflineRecognizerConfig &config);
 #endif
 
 #if __OHOS__
-template OfflineRecognizerQwen3ASRImpl::OfflineRecognizerQwen3ASRImpl(
+template OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModel>::OfflineRecognizerQwen3ASRTplImpl(
     NativeResourceManager *mgr, const OfflineRecognizerConfig &config);
 #endif
+
+#if SHERPA_ONNX_ENABLE_AXERA
+template class OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxera>;
+
+#if __ANDROID_API__ >= 9
+template OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxera>::OfflineRecognizerQwen3ASRTplImpl(
+    AAssetManager *mgr, const OfflineRecognizerConfig &config);
+#endif
+
+#if __OHOS__
+template OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxera>::OfflineRecognizerQwen3ASRTplImpl(
+    NativeResourceManager *mgr, const OfflineRecognizerConfig &config);
+#endif
+#endif  // SHERPA_ONNX_ENABLE_AXERA
 
 }  // namespace sherpa_onnx

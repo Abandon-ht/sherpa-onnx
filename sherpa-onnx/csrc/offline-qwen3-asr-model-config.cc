@@ -73,9 +73,15 @@ bool OfflineQwen3ASRModelConfig::Validate() const {
     return false;
   }
 
-  if (!FileExists(decoder)) {
-    SHERPA_ONNX_LOGE("--qwen3-asr-decoder: '%s' does not exist",
-                     decoder.c_str());
+  // Axera backend uses a directory with config.json instead of a single file.
+  bool decoder_is_file = FileExists(decoder);
+  bool decoder_is_dir = !decoder_is_file && FileExists(decoder + "/config.json");
+
+  if (!decoder_is_file && !decoder_is_dir) {
+    SHERPA_ONNX_LOGE(
+        "--qwen3-asr-decoder: '%s' does not exist (expected an ONNX file or an "
+        "Axera directory containing config.json)",
+        decoder.c_str());
     return false;
   }
 

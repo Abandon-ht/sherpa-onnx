@@ -213,6 +213,7 @@ if(SHERPA_ONNX_ENABLE_AXERA)
   list(APPEND sources
     ./axera/ax-engine-guard.cc
     ./axera/offline-fire-red-asr-ctc-model-axera.cc
+    ./axera/offline-qwen3-asr-model-axera.cc
     ./axera/offline-sense-voice-model-axera.cc
     ./axera/online-stream-axera.cc
     ./axera/online-transducer-greedy-search-decoder-axera.cc
