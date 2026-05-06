@@ -58,6 +58,11 @@ or details.
 
   std::string lang;
 
+  bool non_streaming_mode = false;
+  po.Register(
+      "non-streaming-mode", &non_streaming_mode,
+      "If true, use non-streaming mode for Qwen3-TTS (full text prefill)");
+
   po.Register(
       "num-steps", &gen_config.num_steps,
       "Used by some models, e.g., PocketTTS. Number of flow matching steps");
@@ -113,13 +118,21 @@ or details.
 
   bool is_pocket_tts = !config.model.pocket.lm_flow.empty();
   bool is_supertonic_tts = !config.model.supertonic.tts_json.empty();
+  bool is_qwen3_tts = !config.model.qwen3.talker_prefill.empty();
 
-  if (is_pocket_tts || is_supertonic_tts) {
+  if (is_pocket_tts || is_supertonic_tts || is_qwen3_tts) {
     if (is_supertonic_tts) {
       if (!lang.empty()) {
         gen_config.extra["lang"] = lang;
       }
       gen_config.sid = sid;
+    }
+
+    if (is_qwen3_tts) {
+      gen_config.sid = sid;
+      if (non_streaming_mode) {
+        gen_config.extra["non_streaming_mode"] = "1";
+      }
     }
 
     // Set reference audio for PocketTTS

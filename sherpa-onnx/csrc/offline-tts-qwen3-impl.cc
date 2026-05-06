@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>  // NOLINT
 #include <cmath>
+#include <fstream>
 #include <future>
 #include <numeric>
 #include <random>
@@ -26,8 +27,19 @@
 
 #include "onnxruntime_cxx_api.h"  // NOLINT
 #include "sherpa-onnx/csrc/macros.h"
+#include "nlohmann/json.hpp"
 
 namespace sherpa_onnx {
+
+namespace {
+inline void Fp32ToBf16(const float *src, uint16_t *dst, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    union { float f; uint32_t u; } tmp;
+    tmp.f = src[i];
+    dst[i] = static_cast<uint16_t>(tmp.u >> 16);
+  }
+}
+}  // namespace
 
 OfflineTtsQwen3Impl::OfflineTtsQwen3Impl(const OfflineTtsConfig &config)
     : config_(config),
@@ -83,21 +95,20 @@ std::vector<float> OfflineTtsQwen3Impl::DecodeFrames(
   auto allocator = model_.Allocator();
 
   std::array<int64_t, 3> shape = {1, num_frames, num_code_groups};
-  Ort::Value audio_codes = Ort::Value::CreateTensor(
-      allocator, shape.data(), shape.size(),
-      ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+  Ort::Value audio_codes =
+      Ort::Value::CreateTensor(allocator, shape.data(), shape.size(),
+                               ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
   auto *dst = audio_codes.GetTensorMutableData<int64_t>();
   for (int32_t t = 0; t < num_frames; ++t)
     for (int32_t g = 0; g < num_code_groups; ++g)
       dst[t * num_code_groups + g] = codes[t][g];
 
-  auto result = use_stream
-                    ? model_.RunTokenizer12hzDecodeStream(std::move(audio_codes))
-                    : model_.RunTokenizer12hzDecode(std::move(audio_codes));
+  auto result =
+      use_stream ? model_.RunTokenizer12hzDecodeStream(std::move(audio_codes))
+                 : model_.RunTokenizer12hzDecode(std::move(audio_codes));
 
   const float *audio_data = result.audio_values.GetTensorData<float>();
-  auto audio_shape =
-      result.audio_values.GetTensorTypeAndShapeInfo().GetShape();
+  auto audio_shape = result.audio_values.GetTensorTypeAndShapeInfo().GetShape();
   int32_t total = 1;
   for (auto s : audio_shape) total *= static_cast<int32_t>(s);
 
@@ -106,8 +117,8 @@ std::vector<float> OfflineTtsQwen3Impl::DecodeFrames(
     auto *len = result.lengths.GetTensorData<int64_t>();
     valid = static_cast<int32_t>(len[0]);
     if (valid > total) {
-      SHERPA_ONNX_LOGE(
-          "Warning: lengths (%d) > buffer (%d), clamping", valid, total);
+      SHERPA_ONNX_LOGE("Warning: lengths (%d) > buffer (%d), clamping", valid,
+                       total);
       valid = total;
     }
   }
@@ -128,8 +139,7 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
   const float top_p = gen_config.GetExtraFloat("top_p", 1.0f);
   const float rep_penalty =
       gen_config.GetExtraFloat("repetition_penalty", 1.05f);
-  const int32_t max_new_tokens =
-      gen_config.GetExtraInt("max_new_tokens", 2048);
+  const int32_t max_new_tokens = gen_config.GetExtraInt("max_new_tokens", 2048);
   const float sub_temperature =
       gen_config.GetExtraFloat("sub_temperature", 0.9f);
   const int32_t sub_top_k = gen_config.GetExtraInt("sub_top_k", 50);
@@ -142,9 +152,11 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
   //                 AR steps using the fast stream decoder; first-chunk
   //                 latency ≈ AR time for chunk_frames frames + fast decode.
   // chunk_frames>0 + only batch decoder loaded
-  //               → fake streaming: fire progress-only callbacks (0 audio) every
+  //               → fake streaming: fire progress-only callbacks (0 audio)
+  //               every
   //                 chunk_frames AR steps, then decode all frames once with the
-  //                 batch decoder and deliver audio in chunk_frames-sized pieces.
+  //                 batch decoder and deliver audio in chunk_frames-sized
+  //                 pieces.
   //
   // NOTE: the community tokenizer12hz_decode*.onnx was traced with
   // max_codes_length=1024, so every call costs ~16 s on M-series CPU regardless
@@ -174,8 +186,8 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
   // ------------------------------------------------------------------
   // Step 1: Tokenize
   // ------------------------------------------------------------------
-  const std::string formatted_text = "<|im_start|>assistant\n" + text +
-                                     "<|im_end|>\n<|im_start|>assistant\n";
+  const std::string formatted_text =
+      "<|im_start|>assistant\n" + text + "<|im_end|>\n<|im_start|>assistant\n";
   const auto input_ids = tokenizer_.Encode(formatted_text);
   if (config_.model.debug)
     SHERPA_ONNX_LOGE("Text tokenized: %d tokens", (int)input_ids.size());
@@ -183,24 +195,20 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
   // ------------------------------------------------------------------
   // Step 2: Build prefill embeddings
   // ------------------------------------------------------------------
-  const std::vector<int64_t> special_ids = {cfg.tts_bos_token_id,
-                                            cfg.tts_eos_token_id,
-                                            cfg.tts_pad_token_id};
+  const std::vector<int64_t> special_ids = {
+      cfg.tts_bos_token_id, cfg.tts_eos_token_id, cfg.tts_pad_token_id};
   auto special_embed = RunTextProjectHelper(special_ids);  // [1,3,D]
 
-  const std::vector<int64_t> role_ids(input_ids.begin(),
-                                      input_ids.begin() + 3);
+  const std::vector<int64_t> role_ids(input_ids.begin(), input_ids.begin() + 3);
   auto role_embed = RunTextProjectHelper(role_ids);  // [1,3,D]
 
   const std::vector<int64_t> codec_prefix_ids = {
       cfg.codec_nothink_id, cfg.codec_think_bos_id, cfg.codec_think_eos_id,
       cfg.codec_pad_id, cfg.codec_bos_id};
-  auto codec_prefix_embed =
-      RunCodecEmbedHelper(codec_prefix_ids);  // [1,5,D]
+  auto codec_prefix_embed = RunCodecEmbedHelper(codec_prefix_ids);  // [1,5,D]
 
   const int32_t text_start = 3;
-  const int32_t text_end =
-      static_cast<int32_t>(input_ids.size()) - 5;
+  const int32_t text_end = static_cast<int32_t>(input_ids.size()) - 5;
   std::vector<int64_t> body_text_ids;
   if (text_end > text_start)
     body_text_ids.assign(input_ids.begin() + text_start,
@@ -210,10 +218,32 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
   const float *role_data = role_embed.GetTensorData<float>();
   const float *codec_prefix_data = codec_prefix_embed.GetTensorData<float>();
 
-  // Prefill layout (8 positions):
-  // [role(3)] + [tts_pad+nothink, tts_pad+think_bos, tts_pad+think_eos,
-  //              tts_bos+pad] + [text[3]+codec_bos]
-  const int32_t prefill_len = 8;
+  const bool non_streaming =
+      gen_config.GetExtraInt("non_streaming_mode", 0) != 0;
+
+  // trailing_text_hidden
+  std::vector<std::vector<float>> trailing;
+  const std::vector<float> tts_pad_vec(special_data + 2 * D,
+                                       special_data + 3 * D);
+  if (non_streaming) {
+    trailing.emplace_back(tts_pad_vec);
+  } else {
+    if (body_text_ids.size() > 1) {
+      const std::vector<int64_t> trail_ids(body_text_ids.begin() + 1,
+                                           body_text_ids.end());
+      auto te = RunTextProjectHelper(trail_ids);
+      const float *td = te.GetTensorData<float>();
+      const int32_t n = static_cast<int32_t>(trail_ids.size());
+      for (int32_t i = 0; i < n; ++i)
+        trailing.emplace_back(td + i * D, td + (i + 1) * D);
+    }
+    trailing.emplace_back(special_data + 1 * D, special_data + 2 * D);
+  }
+
+  // Prefill layout
+  const int32_t prefill_len =
+      non_streaming ? 6 + static_cast<int32_t>(body_text_ids.size()) + 1 + 1
+                    : 8;
   std::vector<float> prefill_data(prefill_len * D, 0.0f);
   int32_t pos = 0;
 
@@ -226,39 +256,199 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
       prefill_data[pos * D + d] =
           special_data[2 * D + d] + codec_prefix_data[i * D + d];
 
-  for (int32_t d = 0; d < D; ++d)
-    prefill_data[pos * D + d] =
-        special_data[0 * D + d] + codec_prefix_data[3 * D + d];
-  ++pos;
-
-  {
-    auto first_embed =
-        RunTextProjectHelper({body_text_ids[0]});
-    const float *fd = first_embed.GetTensorData<float>();
+  if (non_streaming) {
+    // all body text + codec_pad
+    for (size_t i = 0; i < body_text_ids.size(); ++i, ++pos) {
+      auto text_embed = RunTextProjectHelper({body_text_ids[i]});
+      const float *td = text_embed.GetTensorData<float>();
+      for (int32_t d = 0; d < D; ++d)
+        prefill_data[pos * D + d] = td[d] + codec_prefix_data[3 * D + d];
+    }
+    // tts_eos + codec_pad
     for (int32_t d = 0; d < D; ++d)
       prefill_data[pos * D + d] =
-          fd[d] + codec_prefix_data[4 * D + d];
+          special_data[1 * D + d] + codec_prefix_data[3 * D + d];
+    ++pos;
+    // tts_pad + codec_bos
+    for (int32_t d = 0; d < D; ++d)
+      prefill_data[pos * D + d] =
+          special_data[2 * D + d] + codec_prefix_data[4 * D + d];
+    ++pos;
+  } else {
+    // tts_bos + codec_pad
+    for (int32_t d = 0; d < D; ++d)
+      prefill_data[pos * D + d] =
+          special_data[0 * D + d] + codec_prefix_data[3 * D + d];
+    ++pos;
+    // text[0] + codec_bos
+    auto first_embed = RunTextProjectHelper({body_text_ids[0]});
+    const float *fd = first_embed.GetTensorData<float>();
+    for (int32_t d = 0; d < D; ++d)
+      prefill_data[pos * D + d] = fd[d] + codec_prefix_data[4 * D + d];
     ++pos;
   }
 
-  // trailing_text_hidden: [text[4]..text[-6], tts_eos_embed]
-  std::vector<std::vector<float>> trailing;
-  if (body_text_ids.size() > 1) {
-    const std::vector<int64_t> trail_ids(body_text_ids.begin() + 1,
-                                         body_text_ids.end());
-    auto te = RunTextProjectHelper(trail_ids);
-    const float *td = te.GetTensorData<float>();
-    const int32_t n = static_cast<int32_t>(trail_ids.size());
-    for (int32_t i = 0; i < n; ++i)
-      trailing.emplace_back(td + i * D, td + (i + 1) * D);
-  }
-  trailing.emplace_back(special_data + 1 * D, special_data + 2 * D);
-  const std::vector<float> tts_pad_vec(special_data + 2 * D,
-                                       special_data + 3 * D);
+  if (config_.model.debug) {
+    SHERPA_ONNX_LOGE("prefill_len=%d, trailing=%d, non_streaming=%d",
+                     prefill_len, (int)trailing.size(), (int)non_streaming);
 
-  if (config_.model.debug)
-    SHERPA_ONNX_LOGE("prefill_len=%d, trailing=%d", prefill_len,
-                     (int)trailing.size());
+    // Print prefill tokens
+    SHERPA_ONNX_LOGE("=== Prefill Tokens ===");
+    int32_t p = 0;
+    SHERPA_ONNX_LOGE("Pos %d-%d: role tokens [%d, %d, %d]", p, p + 2,
+                     (int)role_ids[0], (int)role_ids[1], (int)role_ids[2]);
+    p += 3;
+    SHERPA_ONNX_LOGE("Pos %d: tts_pad(%d) + codec_nothink(%d)", p,
+                     (int)cfg.tts_pad_token_id, (int)cfg.codec_nothink_id);
+    ++p;
+    SHERPA_ONNX_LOGE("Pos %d: tts_pad(%d) + codec_think_bos(%d)", p,
+                     (int)cfg.tts_pad_token_id, (int)cfg.codec_think_bos_id);
+    ++p;
+    SHERPA_ONNX_LOGE("Pos %d: tts_pad(%d) + codec_think_eos(%d)", p,
+                     (int)cfg.tts_pad_token_id, (int)cfg.codec_think_eos_id);
+    ++p;
+    if (non_streaming) {
+      for (size_t i = 0; i < body_text_ids.size(); ++i, ++p) {
+        SHERPA_ONNX_LOGE("Pos %d: text[%d](%d) + codec_pad(%d)", p, (int)i,
+                         (int)body_text_ids[i], (int)cfg.codec_pad_id);
+      }
+      SHERPA_ONNX_LOGE("Pos %d: tts_eos(%d) + codec_pad(%d)", p,
+                       (int)cfg.tts_eos_token_id, (int)cfg.codec_pad_id);
+      ++p;
+      SHERPA_ONNX_LOGE("Pos %d: tts_pad(%d) + codec_bos(%d)", p,
+                       (int)cfg.tts_pad_token_id, (int)cfg.codec_bos_id);
+      ++p;
+    } else {
+      SHERPA_ONNX_LOGE("Pos %d: tts_bos(%d) + codec_pad(%d)", p,
+                       (int)cfg.tts_bos_token_id, (int)cfg.codec_pad_id);
+      ++p;
+      SHERPA_ONNX_LOGE("Pos %d: text[0](%d) + codec_bos(%d)", p,
+                       (int)body_text_ids[0], (int)cfg.codec_bos_id);
+      ++p;
+    }
+    SHERPA_ONNX_LOGE("======================");
+
+    // Write prefill embeddings to file
+    std::string debug_path = "qwen3_tts_prefill_debug.bin";
+    std::ofstream ofs(debug_path, std::ios::binary);
+    if (ofs) {
+      ofs.write(reinterpret_cast<const char *>(prefill_data.data()),
+                prefill_data.size() * sizeof(float));
+      SHERPA_ONNX_LOGE(
+          "Prefill embeddings written to %s [%d floats, shape=1x%dx%d]",
+          debug_path.c_str(), (int)prefill_data.size(), prefill_len, D);
+    } else {
+      SHERPA_ONNX_LOGE("Failed to write prefill debug file: %s",
+                       debug_path.c_str());
+    }
+
+    // Write tts_pad_vec to file (for non-streaming decode)
+    std::string pad_vec_path = "tts_pad_vec.bin";
+    std::ofstream pad_ofs(pad_vec_path, std::ios::binary);
+    if (pad_ofs) {
+      int32_t hidden = D;
+      pad_ofs.write(reinterpret_cast<const char *>(&hidden), sizeof(hidden));
+      pad_ofs.write(reinterpret_cast<const char *>(tts_pad_vec.data()),
+                    tts_pad_vec.size() * sizeof(float));
+      SHERPA_ONNX_LOGE("tts_pad_vec written to %s [hidden=%d]",
+                       pad_vec_path.c_str(), hidden);
+    } else {
+      SHERPA_ONNX_LOGE("Failed to write tts_pad_vec file: %s",
+                       pad_vec_path.c_str());
+    }
+
+    // Write trailing_text_hiddens to file (for streaming decode)
+    // Shape: [trailing_len, D], float32
+    if (!non_streaming) {
+      std::string trail_path = "trailing_text_hiddens.bin";
+      std::ofstream trail_ofs(trail_path, std::ios::binary);
+      if (trail_ofs) {
+        for (const auto &vec : trailing) {
+          trail_ofs.write(reinterpret_cast<const char *>(vec.data()),
+                          vec.size() * sizeof(float));
+        }
+        SHERPA_ONNX_LOGE(
+            "trailing_text_hiddens written to %s [%d x %d] (streaming)",
+            trail_path.c_str(), (int)trailing.size(), D);
+      } else {
+        SHERPA_ONNX_LOGE("Failed to write trailing_text_hiddens file: %s",
+                         trail_path.c_str());
+      }
+    }
+
+    // ── BFloat16 export for ax-llm debug ────────────────────────────────────
+    // prefill_embeds_bf16.bin
+    {
+      std::string bf16_path = "prefill_embeds_bf16.bin";
+      std::ofstream ofs(bf16_path, std::ios::binary);
+      if (ofs) {
+        std::vector<uint16_t> bf16_buf(prefill_data.size());
+        Fp32ToBf16(prefill_data.data(), bf16_buf.data(), prefill_data.size());
+        ofs.write(reinterpret_cast<const char *>(bf16_buf.data()),
+                  bf16_buf.size() * sizeof(uint16_t));
+        SHERPA_ONNX_LOGE(
+            "prefill_embeds_bf16.bin written [%d x %d] bf16",
+            prefill_len, D);
+      } else {
+        SHERPA_ONNX_LOGE("Failed to write %s", bf16_path.c_str());
+      }
+    }
+
+    // tts_pad_vec_bf16.bin
+    {
+      std::string bf16_path = "tts_pad_vec_bf16.bin";
+      std::ofstream ofs(bf16_path, std::ios::binary);
+      if (ofs) {
+        int32_t hidden = D;
+        ofs.write(reinterpret_cast<const char *>(&hidden), sizeof(hidden));
+        std::vector<uint16_t> bf16_buf(D);
+        Fp32ToBf16(tts_pad_vec.data(), bf16_buf.data(), D);
+        ofs.write(reinterpret_cast<const char *>(bf16_buf.data()),
+                  D * sizeof(uint16_t));
+        SHERPA_ONNX_LOGE("tts_pad_vec_bf16.bin written [hidden=%d] bf16", D);
+      } else {
+        SHERPA_ONNX_LOGE("Failed to write %s", bf16_path.c_str());
+      }
+    }
+
+    // trailing_text_hiddens_bf16.bin (streaming only)
+    if (!non_streaming) {
+      std::string bf16_path = "trailing_text_hiddens_bf16.bin";
+      std::ofstream ofs(bf16_path, std::ios::binary);
+      if (ofs) {
+        for (const auto &vec : trailing) {
+          std::vector<uint16_t> bf16_buf(D);
+          Fp32ToBf16(vec.data(), bf16_buf.data(), D);
+          ofs.write(reinterpret_cast<const char *>(bf16_buf.data()),
+                    D * sizeof(uint16_t));
+        }
+        SHERPA_ONNX_LOGE(
+            "trailing_text_hiddens_bf16.bin written [%d x %d] bf16 (streaming)",
+            (int)trailing.size(), D);
+      } else {
+        SHERPA_ONNX_LOGE("Failed to write %s", bf16_path.c_str());
+      }
+    }
+
+    // meta.json
+    {
+      nlohmann::json j;
+      j["S"] = prefill_len;
+      j["hidden_size"] = D;
+      j["audio_token_id"] = cfg.tts_bos_token_id;
+      j["streaming"] = !non_streaming;
+      if (!non_streaming) {
+        j["trailing_len"] = static_cast<int>(trailing.size());
+      }
+      std::ofstream ofs("meta.json");
+      if (ofs) {
+        ofs << j.dump(2);
+        SHERPA_ONNX_LOGE("meta.json written");
+      } else {
+        SHERPA_ONNX_LOGE("Failed to write meta.json");
+      }
+    }
+  }
 
   auto allocator = model_.Allocator();
 
@@ -278,8 +468,8 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
   // Step 3: Talker prefill
   // ------------------------------------------------------------------
   auto t_prefill_start = std::chrono::steady_clock::now();
-  auto pr = model_.RunTalkerPrefill(std::move(prefill_embeds),
-                                    std::move(attn_mask));
+  auto pr =
+      model_.RunTalkerPrefill(std::move(prefill_embeds), std::move(attn_mask));
   auto t_prefill_end = std::chrono::steady_clock::now();
 
   Ort::Value logits = std::move(pr.logits);
@@ -311,8 +501,7 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
 
   // Helper: deliver n samples via callback and append to accumulated_audio.
   auto deliver = [&](const float *s, int32_t n, float p) -> bool {
-    if (s && n > 0)
-      accumulated_audio.insert(accumulated_audio.end(), s, s + n);
+    if (s && n > 0) accumulated_audio.insert(accumulated_audio.end(), s, s + n);
     return callback(s, n, p) != 0;
   };
 
@@ -330,14 +519,13 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
       samples = std::move(raw);
     }
     if (!pending_prev_held_tail.empty() && crossfade_samples > 0) {
-      const int32_t cf = std::min(
-          crossfade_samples,
-          static_cast<int32_t>(
-              std::min(pending_prev_held_tail.size(), samples.size())));
+      const int32_t cf =
+          std::min(crossfade_samples,
+                   static_cast<int32_t>(std::min(pending_prev_held_tail.size(),
+                                                 samples.size())));
       for (int32_t i = 0; i < cf; ++i) {
         const float t = static_cast<float>(i + 1) / (cf + 1);
-        samples[i] =
-            pending_prev_held_tail[i] * (1.0f - t) + samples[i] * t;
+        samples[i] = pending_prev_held_tail[i] * (1.0f - t) + samples[i] * t;
       }
     }
     if (crossfade_samples > 0 &&
@@ -359,8 +547,8 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
     // 4a: Sample primary code
     const int64_t primary_code = SampleFromLogits(
         logits, cfg.talker_vocab_size, temperature, top_k, top_p, rep_penalty,
-        generated_primary, suppress_start, suppress_end,
-        cfg.codec_eos_token_id, step < kMinNewTokens);
+        generated_primary, suppress_start, suppress_end, cfg.codec_eos_token_id,
+        step < kMinNewTokens);
 
     if (primary_code == cfg.codec_eos_token_id) {
       if (config_.model.debug) SHERPA_ONNX_LOGE("EOS at step %d", step);
@@ -384,34 +572,32 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
     const float *pe_data = primary_embed.GetTensorData<float>();
 
     std::vector<float> cp_ctx(2 * D);
-    std::copy(lh_data + (lh_seq - 1) * D, lh_data + lh_seq * D,
-              cp_ctx.begin());
+    std::copy(lh_data + (lh_seq - 1) * D, lh_data + lh_seq * D, cp_ctx.begin());
     std::copy(pe_data, pe_data + D, cp_ctx.begin() + D);
 
     std::vector<float> codec_sum(D);
     std::copy(pe_data, pe_data + D, codec_sum.begin());
 
     for (int32_t j = 0; j < num_code_groups - 1; ++j) {
-      const int32_t cp_len =
-          static_cast<int32_t>(cp_ctx.size()) / D;
+      const int32_t cp_len = static_cast<int32_t>(cp_ctx.size()) / D;
       std::array<int64_t, 3> cp_shape = {1, cp_len, D};
-      Ort::Value cp_emb = Ort::Value::CreateTensor(
-          allocator, cp_shape.data(), cp_shape.size(),
-          ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
+      Ort::Value cp_emb =
+          Ort::Value::CreateTensor(allocator, cp_shape.data(), cp_shape.size(),
+                                   ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
       std::copy(cp_ctx.begin(), cp_ctx.end(),
                 cp_emb.GetTensorMutableData<float>());
 
       std::array<int64_t, 1> gs_shape = {1};
-      Ort::Value gen_step = Ort::Value::CreateTensor(
-          allocator, gs_shape.data(), gs_shape.size(),
-          ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+      Ort::Value gen_step =
+          Ort::Value::CreateTensor(allocator, gs_shape.data(), gs_shape.size(),
+                                   ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
       gen_step.GetTensorMutableData<int64_t>()[0] = j;
 
-      auto cp_logits = model_.RunCodePredictor(std::move(cp_emb),
-                                               std::move(gen_step));
-      const int64_t res_code = SampleFromLogits(
-          cp_logits, cfg.code_predictor_vocab_size, sub_temperature, sub_top_k,
-          sub_top_p, 1.0f, {});
+      auto cp_logits =
+          model_.RunCodePredictor(std::move(cp_emb), std::move(gen_step));
+      const int64_t res_code =
+          SampleFromLogits(cp_logits, cfg.code_predictor_vocab_size,
+                           sub_temperature, sub_top_k, sub_top_p, 1.0f, {});
       frame_codes[j + 1] = res_code;
 
       std::array<int64_t, 2> rid_shape = {1, 1};
@@ -420,9 +606,9 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
           ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
       rid.GetTensorMutableData<int64_t>()[0] = res_code;
 
-      Ort::Value gs2 = Ort::Value::CreateTensor(
-          allocator, gs_shape.data(), gs_shape.size(),
-          ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+      Ort::Value gs2 =
+          Ort::Value::CreateTensor(allocator, gs_shape.data(), gs_shape.size(),
+                                   ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
       gs2.GetTensorMutableData<int64_t>()[0] = j;
 
       auto res_emb =
@@ -437,23 +623,22 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
     // 4d: Build next talker input
     const std::vector<float> &txt_hidden =
         (step < static_cast<int32_t>(trailing.size())) ? trailing[step]
-                                                        : tts_pad_vec;
+                                                       : tts_pad_vec;
     std::vector<float> next_in(D);
-    for (int32_t d = 0; d < D; ++d)
-      next_in[d] = codec_sum[d] + txt_hidden[d];
+    for (int32_t d = 0; d < D; ++d) next_in[d] = codec_sum[d] + txt_hidden[d];
 
     std::array<int64_t, 3> ne_shape = {1, 1, D};
-    Ort::Value next_emb = Ort::Value::CreateTensor(
-        allocator, ne_shape.data(), ne_shape.size(),
-        ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
+    Ort::Value next_emb =
+        Ort::Value::CreateTensor(allocator, ne_shape.data(), ne_shape.size(),
+                                 ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
     std::copy(next_in.begin(), next_in.end(),
               next_emb.GetTensorMutableData<float>());
 
     total_seq_len++;
     std::array<int64_t, 2> nm_shape = {1, total_seq_len};
-    Ort::Value new_mask = Ort::Value::CreateTensor(
-        allocator, nm_shape.data(), nm_shape.size(),
-        ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+    Ort::Value new_mask =
+        Ort::Value::CreateTensor(allocator, nm_shape.data(), nm_shape.size(),
+                                 ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
     std::fill(new_mask.GetTensorMutableData<int64_t>(),
               new_mask.GetTensorMutableData<int64_t>() + total_seq_len, 1LL);
 
@@ -514,8 +699,7 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
 
           // Launch async decode — runs concurrently with the next AR chunk.
           pending_future = std::async(
-              std::launch::async,
-              [this, ctx = std::move(ctx_chunk)]() {
+              std::launch::async, [this, ctx = std::move(ctx_chunk)]() {
                 return DecodeFrames(ctx, /*use_stream=*/true);
               });
         }
@@ -528,6 +712,18 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
   }
 
   auto t_gen_end = std::chrono::steady_clock::now();
+
+  if (config_.model.debug) {
+    SHERPA_ONNX_LOGE("Generated %d frames (num_code_groups=%d):",
+                     (int)all_codes.size(), num_code_groups);
+    for (size_t f = 0; f < all_codes.size(); ++f) {
+      std::string line = "Frame " + std::to_string(f) + ": ";
+      for (size_t g = 0; g < all_codes[f].size(); ++g) {
+        line += std::to_string(all_codes[f][g]) + " ";
+      }
+      SHERPA_ONNX_LOGE("%s", line.c_str());
+    }
+  }
 
   // Flush the async decode for the last AR chunk (started but not yet
   // delivered because there were no further chunks to trigger flush_pending).
@@ -577,7 +773,8 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
       audio.samples = DecodeFrames(tail, /*use_stream=*/has_stream_decoder);
     }
   } else {
-    // Fake-streaming mode (streaming but no stream decoder): decode all at once.
+    // Fake-streaming mode (streaming but no stream decoder): decode all at
+    // once.
     audio.samples = DecodeFrames(all_codes, /*use_stream=*/false);
   }
   auto t_decode_end = std::chrono::steady_clock::now();
@@ -598,8 +795,7 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
       // Mode B: deliver all decoded audio in chunk_frames-sized pieces.
       const int32_t total_s = static_cast<int32_t>(audio.samples.size());
       const int32_t chunk_s = chunk_frames * kSamplesPerFrame;
-      for (int32_t off = 0; off < total_s && !stop_requested;
-           off += chunk_s) {
+      for (int32_t off = 0; off < total_s && !stop_requested; off += chunk_s) {
         const int32_t n = std::min(chunk_s, total_s - off);
         const float prog = static_cast<float>(off + n) / total_s;
         if (callback(audio.samples.data() + off, n, prog) == 0)
@@ -611,21 +807,19 @@ GeneratedAudio OfflineTtsQwen3Impl::Generate(
         if (!audio.samples.empty()) {
           // Blend held_tail with start of tail audio
           const int32_t cf = std::min(
-              crossfade_samples,
-              static_cast<int32_t>(
-                  std::min(held_tail.size(), audio.samples.size())));
+              crossfade_samples, static_cast<int32_t>(std::min(
+                                     held_tail.size(), audio.samples.size())));
           for (int32_t i = 0; i < cf; ++i) {
             const float t = static_cast<float>(i + 1) / (cf + 1);
-            audio.samples[i] =
-                held_tail[i] * (1.0f - t) + audio.samples[i] * t;
+            audio.samples[i] = held_tail[i] * (1.0f - t) + audio.samples[i] * t;
           }
           deliver(audio.samples.data(), cf, 1.0f);
           if (static_cast<int32_t>(audio.samples.size()) > cf)
             deliver(audio.samples.data() + cf,
                     static_cast<int32_t>(audio.samples.size()) - cf, 1.0f);
         } else {
-          deliver(held_tail.data(),
-                  static_cast<int32_t>(held_tail.size()), 1.0f);
+          deliver(held_tail.data(), static_cast<int32_t>(held_tail.size()),
+                  1.0f);
         }
         held_tail.clear();
       } else if (!audio.samples.empty()) {
@@ -683,9 +877,9 @@ Ort::Value OfflineTtsQwen3Impl::RunTextProjectHelper(
     const std::vector<int64_t> &ids) const {
   auto allocator = model_.Allocator();
   std::array<int64_t, 2> shape = {1, static_cast<int64_t>(ids.size())};
-  Ort::Value input = Ort::Value::CreateTensor(
-      allocator, shape.data(), shape.size(),
-      ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+  Ort::Value input =
+      Ort::Value::CreateTensor(allocator, shape.data(), shape.size(),
+                               ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
   std::copy(ids.begin(), ids.end(), input.GetTensorMutableData<int64_t>());
   return model_.RunTextProject(std::move(input));
 }
@@ -694,9 +888,9 @@ Ort::Value OfflineTtsQwen3Impl::RunCodecEmbedHelper(
     const std::vector<int64_t> &ids) const {
   auto allocator = model_.Allocator();
   std::array<int64_t, 2> shape = {1, static_cast<int64_t>(ids.size())};
-  Ort::Value input = Ort::Value::CreateTensor(
-      allocator, shape.data(), shape.size(),
-      ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
+  Ort::Value input =
+      Ort::Value::CreateTensor(allocator, shape.data(), shape.size(),
+                               ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64);
   std::copy(ids.begin(), ids.end(), input.GetTensorMutableData<int64_t>());
   return model_.RunCodecEmbed(std::move(input));
 }
@@ -705,8 +899,7 @@ int64_t OfflineTtsQwen3Impl::SampleFromLogits(
     const Ort::Value &logits_tensor, int32_t vocab_size, float temperature,
     int32_t top_k, float top_p, float repetition_penalty,
     const std::vector<int64_t> &generated_ids, int32_t suppress_start,
-    int32_t suppress_end, int64_t suppress_exception,
-    bool suppress_eos) const {
+    int32_t suppress_end, int64_t suppress_exception, bool suppress_eos) const {
   const auto logits_shape =
       logits_tensor.GetTensorTypeAndShapeInfo().GetShape();
   const float *logits_data = logits_tensor.GetTensorData<float>();
@@ -729,11 +922,11 @@ int64_t OfflineTtsQwen3Impl::SampleFromLogits(
     for (auto id : generated_ids)
       if (id >= 0 && id < V)
         buf[id] = buf[id] > 0 ? buf[id] / repetition_penalty
-                               : buf[id] * repetition_penalty;
+                              : buf[id] * repetition_penalty;
 
   if (temperature < 1e-6f)
-    return static_cast<int64_t>(
-        std::max_element(buf.begin(), buf.end()) - buf.begin());
+    return static_cast<int64_t>(std::max_element(buf.begin(), buf.end()) -
+                                buf.begin());
 
   for (auto &v : buf) v /= temperature;
 
@@ -748,7 +941,10 @@ int64_t OfflineTtsQwen3Impl::SampleFromLogits(
 
   const float max_v = *std::max_element(buf.begin(), buf.end());
   float sum = 0;
-  for (auto &v : buf) { v = std::exp(v - max_v); sum += v; }
+  for (auto &v : buf) {
+    v = std::exp(v - max_v);
+    sum += v;
+  }
   for (auto &v : buf) v /= sum;
 
   if (top_p < 1.0f && top_p > 0.0f) {
@@ -760,11 +956,16 @@ int64_t OfflineTtsQwen3Impl::SampleFromLogits(
     int32_t cut = V;
     for (int32_t i = 0; i < V; ++i) {
       cum += pi[i].first;
-      if (cum >= top_p) { cut = i + 1; break; }
+      if (cum >= top_p) {
+        cut = i + 1;
+        break;
+      }
     }
     for (int32_t i = cut; i < V; ++i) buf[pi[i].second] = 0.0f;
-    float ns = 0; for (auto v : buf) ns += v;
-    if (ns > 0) for (auto &v : buf) v /= ns;
+    float ns = 0;
+    for (auto v : buf) ns += v;
+    if (ns > 0)
+      for (auto &v : buf) v /= ns;
   }
 
   thread_local std::mt19937 rng(std::random_device{}());
