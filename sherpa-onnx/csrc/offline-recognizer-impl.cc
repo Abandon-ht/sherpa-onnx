@@ -55,6 +55,7 @@
 #endif
 
 #if SHERPA_ONNX_ENABLE_AXCL
+#include "sherpa-onnx/csrc/axcl/offline-qwen3-asr-model-axcl.h"
 #include "sherpa-onnx/csrc/axcl/offline-sense-voice-model-axcl.h"
 #endif
 
@@ -125,6 +126,34 @@ std::unique_ptr<OfflineRecognizerImpl> OfflineRecognizerImpl::Create(
         "Please rebuild sherpa-onnx with -DSHERPA_ONNX_ENABLE_AXERA=ON if you "
         "want to use axera. See also "
         "https://k2-fsa.github.io/sherpa/onnx/axera/install.html");
+    SHERPA_ONNX_EXIT(-1);
+    return nullptr;
+#endif
+  }
+
+  if (config.model_config.provider == "axcl") {
+#if SHERPA_ONNX_ENABLE_AXCL
+    if (!config.model_config.sense_voice.model.empty()) {
+      return std::make_unique<
+          OfflineRecognizerSenseVoiceTplImpl<OfflineSenseVoiceModelAxcl>>(
+          config);
+    } else if (!config.model_config.fire_red_asr_ctc.model.empty()) {
+      return std::make_unique<OfflineRecognizerCtcImpl>(config);
+    } else if (!config.model_config.qwen3_asr.conv_frontend.empty()) {
+      return std::make_unique<
+          OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxcl>>(config);
+    } else {
+      SHERPA_ONNX_LOGE(
+          "Only SenseVoice, FireRedASR CTC, and Qwen3-ASR models are currently supported "
+          "by Axcl NPU for non-streaming ASR.");
+      SHERPA_ONNX_EXIT(-1);
+      return nullptr;
+    }
+#else
+    SHERPA_ONNX_LOGE(
+        "Please rebuild sherpa-onnx with -DSHERPA_ONNX_ENABLE_AXCL=ON if you "
+        "want to use axcl. See also "
+        "https://k2-fsa.github.io/sherpa/onnx/axcl/install.html");
     SHERPA_ONNX_EXIT(-1);
     return nullptr;
 #endif
@@ -480,6 +509,35 @@ std::unique_ptr<OfflineRecognizerImpl> OfflineRecognizerImpl::Create(
         "Please rebuild sherpa-onnx with -DSHERPA_ONNX_ENABLE_AXERA=ON if you "
         "want to use axera. See also "
         "https://k2-fsa.github.io/sherpa/onnx/axera/install.html");
+    SHERPA_ONNX_EXIT(-1);
+    return nullptr;
+#endif
+  }
+
+  if (config.model_config.provider == "axcl") {
+#if SHERPA_ONNX_ENABLE_AXCL
+    if (!config.model_config.sense_voice.model.empty()) {
+      return std::make_unique<
+          OfflineRecognizerSenseVoiceTplImpl<OfflineSenseVoiceModelAxcl>>(
+          mgr, config);
+    } else if (!config.model_config.fire_red_asr_ctc.model.empty()) {
+      return std::make_unique<OfflineRecognizerCtcImpl>(mgr, config);
+    } else if (!config.model_config.qwen3_asr.conv_frontend.empty()) {
+      return std::make_unique<
+          OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxcl>>(mgr,
+                                                                       config);
+    } else {
+      SHERPA_ONNX_LOGE(
+          "Only SenseVoice, FireRedASR CTC, and Qwen3-ASR models are currently supported "
+          "by Axcl NPU for non-streaming ASR.");
+      SHERPA_ONNX_EXIT(-1);
+      return nullptr;
+    }
+#else
+    SHERPA_ONNX_LOGE(
+        "Please rebuild sherpa-onnx with -DSHERPA_ONNX_ENABLE_AXCL=ON if you "
+        "want to use axcl. See also "
+        "https://k2-fsa.github.io/sherpa/onnx/axcl/install.html");
     SHERPA_ONNX_EXIT(-1);
     return nullptr;
 #endif

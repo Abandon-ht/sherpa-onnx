@@ -22,6 +22,10 @@
 #include "sherpa-onnx/csrc/axera/offline-qwen3-asr-model-axera.h"
 #endif
 
+#if SHERPA_ONNX_ENABLE_AXCL
+#include "sherpa-onnx/csrc/axcl/offline-qwen3-asr-model-axcl.h"
+#endif
+
 namespace sherpa_onnx {
 
 template <typename ModelType>

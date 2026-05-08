@@ -338,10 +338,11 @@ OfflineRecognizerQwen3ASRTplImpl<ModelType>::OfflineRecognizerQwen3ASRTplImpl(
           config.model_config.qwen3_asr.tokenizer)),
       rng_(config.model_config.qwen3_asr.seed) {
   InitPromptTemplateIds();
-  if (config_.model_config.provider == "axera") {
+  if (config_.model_config.provider == "axera" ||
+      config_.model_config.provider == "axcl") {
     if (!model_->InitDecoder(config.model_config.qwen3_asr.decoder,
                              config.model_config.qwen3_asr.max_new_tokens)) {
-      SHERPA_ONNX_LOGE("Failed to init Axera decoder for qwen3-asr");
+      SHERPA_ONNX_LOGE("Failed to init Axera/Axcl decoder for qwen3-asr");
       SHERPA_ONNX_EXIT(-1);
     }
   }
@@ -358,10 +359,11 @@ OfflineRecognizerQwen3ASRTplImpl<ModelType>::OfflineRecognizerQwen3ASRTplImpl(
           mgr, config.model_config.qwen3_asr.tokenizer)),
       rng_(config.model_config.qwen3_asr.seed) {
   InitPromptTemplateIds();
-  if (config_.model_config.provider == "axera") {
+  if (config_.model_config.provider == "axera" ||
+      config_.model_config.provider == "axcl") {
     if (!model_->InitDecoder(config.model_config.qwen3_asr.decoder,
                              config.model_config.qwen3_asr.max_new_tokens)) {
-      SHERPA_ONNX_LOGE("Failed to init Axera decoder for qwen3-asr");
+      SHERPA_ONNX_LOGE("Failed to init Axera/Axcl decoder for qwen3-asr");
       SHERPA_ONNX_EXIT(-1);
     }
   }
@@ -702,9 +704,10 @@ OfflineRecognitionResult OfflineRecognizerQwen3ASRTplImpl<ModelType>::GenerateTe
     OfflineStream *stream) const {
   OfflineRecognitionResult result;
 
-  if (config_.model_config.provider == "axera") {
+  if (config_.model_config.provider == "axera" ||
+      config_.model_config.provider == "axcl") {
     if (config_.model_config.debug) {
-      SHERPA_ONNX_LOGE("qwen3-asr: Axera backend decoding");
+      SHERPA_ONNX_LOGE("qwen3-asr: Axera/Axcl backend decoding");
     }
 
     int32_t max_new_tokens_ax =
@@ -1345,5 +1348,19 @@ template OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxera>::OfflineRec
     NativeResourceManager *mgr, const OfflineRecognizerConfig &config);
 #endif
 #endif  // SHERPA_ONNX_ENABLE_AXERA
+
+#if SHERPA_ONNX_ENABLE_AXCL
+template class OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxcl>;
+
+#if __ANDROID_API__ >= 9
+template OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxcl>::OfflineRecognizerQwen3ASRTplImpl(
+    AAssetManager *mgr, const OfflineRecognizerConfig &config);
+#endif
+
+#if __OHOS__
+template OfflineRecognizerQwen3ASRTplImpl<OfflineQwen3ASRModelAxcl>::OfflineRecognizerQwen3ASRTplImpl(
+    NativeResourceManager *mgr, const OfflineRecognizerConfig &config);
+#endif
+#endif  // SHERPA_ONNX_ENABLE_AXCL
 
 }  // namespace sherpa_onnx

@@ -238,6 +238,7 @@ if(SHERPA_ONNX_ENABLE_AXCL)
     ./axcl/axcl-model.cc
     ./axcl/offline-sense-voice-model-axcl.cc
     ./axcl/offline-fire-red-asr-ctc-model-axcl.cc
+    ./axcl/offline-qwen3-asr-model-axcl.cc
     ./axcl/utils.cc
   )
   if(SHERPA_ONNX_ENABLE_TTS)
@@ -458,6 +459,25 @@ if(SHERPA_ONNX_ENABLE_AXCL)
   else()
     target_link_libraries(sherpa-onnx-core
       axcl_rt
+    )
+  endif()
+
+  if(DEFINED ENV{AX_LLM_ROOT})
+    set(AX_LLM_BUILD_DIR $ENV{AX_LLM_ROOT}/build_aarch64)
+    if(NOT EXISTS ${AX_LLM_BUILD_DIR}/install/lib/libaxllm_static.a)
+      message(FATAL_ERROR "AXCL ax-llm not found at ${AX_LLM_BUILD_DIR}/install/lib/libaxllm_static.a")
+    endif()
+    target_compile_definitions(sherpa-onnx-core PUBLIC USE_AXCL)
+    target_include_directories(sherpa-onnx-core PRIVATE
+      $ENV{AX_LLM_ROOT}/src
+      $ENV{AX_LLM_ROOT}/src/runner
+      $ENV{AX_LLM_ROOT}/src/runner/utils
+      $ENV{AX_LLM_ROOT}/third_party/tokenizer.axera/include
+      $ENV{AX_LLM_ROOT}/third_party/magic_enum/include
+    )
+    target_link_libraries(sherpa-onnx-core
+      -L${AX_LLM_BUILD_DIR}/install/lib
+      axllm_static tokenizer openai_api simplecv
     )
   endif()
 endif()

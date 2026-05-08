@@ -48,6 +48,23 @@ fi
 export CPLUS_INCLUDE_PATH="$AXCL_SDK_ROOT/include:$AXCL_SDK_ROOT/bsp:$CPLUS_INCLUDE_PATH"
 export SHERPA_ONNX_AXCL_LIB_DIR="$AXCL_SDK_ROOT/lib"
 
+# ax-llm for axcl backend
+if [ -z "$AX_LLM_ROOT" ]; then
+  AX_LLM_ROOT=/home/m5stack/Workspace/AXERA/ax-llm
+fi
+if [ ! -d "$AX_LLM_ROOT" ]; then
+  echo "AX_LLM_ROOT ($AX_LLM_ROOT) does not exist"
+  exit 1
+fi
+if [ ! -f "$AX_LLM_ROOT/build_aarch64/install/lib/libaxllm_static.a" ]; then
+  echo "$AX_LLM_ROOT/build_aarch64/install/lib/libaxllm_static.a does not exist"
+  exit 1
+fi
+export AX_LLM_ROOT
+if [ -d "$AX_LLM_ROOT/third_party/tokenizer.axera/include" ]; then
+  export CPLUS_INCLUDE_PATH="$AX_LLM_ROOT/third_party/tokenizer.axera/include:$CPLUS_INCLUDE_PATH"
+fi
+
 if command -v aarch64-none-linux-gnu-gcc  &> /dev/null; then
   ln -svf $(which aarch64-none-linux-gnu-gcc) ./aarch64-linux-gnu-gcc
   ln -svf $(which aarch64-none-linux-gnu-g++) ./aarch64-linux-gnu-g++
