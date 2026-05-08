@@ -77,7 +77,7 @@ export SHERPA_ONNX_ALSA_LIB_DIR=$PWD/alsa-lib/src/.libs
 
 if [[ x"$BUILD_SHARED_LIBS" == x"" ]]; then
   # By default, use static link
-  BUILD_SHARED_LIBS=OFF
+  BUILD_SHARED_LIBS=ON
 fi
 
 if [[ x"$SHERPA_ONNX_ENABLE_GPU" == x"" ]]; then
@@ -117,7 +117,7 @@ cmake \
   -DCMAKE_TOOLCHAIN_FILE=../toolchains/aarch64-linux-gnu.toolchain.cmake \
   ..
 
-make VERBOSE=1 -j14
+make VERBOSE=1 -j24
 make install/strip
 
 # Enable it if only needed

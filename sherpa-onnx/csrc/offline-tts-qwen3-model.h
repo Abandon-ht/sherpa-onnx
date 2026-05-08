@@ -87,8 +87,8 @@ class OfflineTtsQwen3Model {
   // Input:  inputs_embeds [1, T, D] float32, attention_mask [1, T] int64
   // Output: logits [1, T, V] float32, last_hidden [1, T, D], KV-cache
   struct TalkerPrefillResult {
-    Ort::Value logits;
-    Ort::Value last_hidden;
+    Ort::Value logits{nullptr};
+    Ort::Value last_hidden{nullptr};
     Qwen3TalkerState state;
   };
   TalkerPrefillResult RunTalkerPrefill(Ort::Value inputs_embeds,
@@ -98,8 +98,8 @@ class OfflineTtsQwen3Model {
   // Input:  inputs_embeds [1, 1, D], attention_mask [1, total_len], KV-cache
   // Output: logits [1, 1, V], last_hidden [1, 1, D], updated KV-cache
   struct TalkerDecodeResult {
-    Ort::Value logits;
-    Ort::Value last_hidden;
+    Ort::Value logits{nullptr};
+    Ort::Value last_hidden{nullptr};
     Qwen3TalkerState state;
   };
   TalkerDecodeResult RunTalkerDecode(Ort::Value inputs_embeds,
@@ -115,8 +115,8 @@ class OfflineTtsQwen3Model {
   // Input:  audio_codes [1, T, num_codebooks] int64
   // Output: audio_values [1, max_samples] float32, lengths [1] int64
   struct Tokenizer12hzDecodeResult {
-    Ort::Value audio_values;
-    Ort::Value lengths;
+    Ort::Value audio_values{nullptr};
+    Ort::Value lengths{nullptr};
   };
   // Batch decoder: traces with large T, suited for full-sequence decode.
   Tokenizer12hzDecodeResult RunTokenizer12hzDecode(
