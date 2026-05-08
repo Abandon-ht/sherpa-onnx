@@ -107,9 +107,15 @@ class OfflineTtsQwen3Model {
                                      Qwen3TalkerState state) const;
 
   // Speaker encoder: mel spectrogram -> speaker embedding
-  // Input:  mels [1, 128, T] float32
+  // Input:  mels [1, T, 128] float32
   // Output: speaker_embedding [1, D] float32
   Ort::Value RunSpeakerEncoder(Ort::Value mels) const;
+
+  // Tokenizer 12Hz encoder: audio waveform -> codec tokens
+  // Input:  audio [1, num_samples] float32, padding_mask [1, num_samples] bool
+  // Output: codes [1, T, 16] int64
+  Ort::Value RunTokenizer12hzEncode(Ort::Value audio,
+                                    Ort::Value padding_mask) const;
 
   // Tokenizer 12Hz decoder: codec tokens -> audio waveform
   // Input:  audio_codes [1, T, num_codebooks] int64
@@ -126,7 +132,9 @@ class OfflineTtsQwen3Model {
   Tokenizer12hzDecodeResult RunTokenizer12hzDecodeStream(
       Ort::Value audio_codes) const;
 
-  // Returns true if the streaming decoder model is loaded.
+  // Returns true if the optional models are loaded.
+  bool HasSpeakerEncoder() const;
+  bool HasTokenizer12hzEncode() const;
   bool HasTokenizer12hzDecodeStream() const;
 
   // Access model configuration

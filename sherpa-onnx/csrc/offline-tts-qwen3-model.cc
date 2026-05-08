@@ -97,6 +97,16 @@ class OfflineTtsQwen3Model::Impl {
     return std::move(out[0]);
   }
 
+  Ort::Value RunTokenizer12hzEncode(Ort::Value audio,
+                                     Ort::Value padding_mask) const {
+    Ort::Value inputs[2] = {std::move(audio), std::move(padding_mask)};
+    auto out = tokenizer12hz_encode_sess_->Run(
+        {}, tokenizer12hz_encode_input_names_ptr_.data(), inputs, 2,
+        tokenizer12hz_encode_output_names_ptr_.data(),
+        tokenizer12hz_encode_output_names_ptr_.size());
+    return std::move(out[0]);
+  }
+
   Tokenizer12hzDecodeResult RunTokenizer12hzDecode(
       Ort::Value audio_codes) const {
     auto out = tokenizer12hz_decode_sess_->Run(
@@ -129,6 +139,14 @@ class OfflineTtsQwen3Model::Impl {
     }
     // Fallback: use batch decoder
     return RunTokenizer12hzDecode(std::move(audio_codes));
+  }
+
+  bool HasSpeakerEncoder() const {
+    return speaker_encoder_sess_ != nullptr;
+  }
+
+  bool HasTokenizer12hzEncode() const {
+    return tokenizer12hz_encode_sess_ != nullptr;
   }
 
   bool HasTokenizer12hzDecodeStream() const {
@@ -198,6 +216,10 @@ class OfflineTtsQwen3Model::Impl {
 
     if (!config_.qwen3.speaker_encoder.empty()) {
       InitSpeakerEncoder(config_.qwen3.speaker_encoder);
+    }
+
+    if (!config_.qwen3.tokenizer12hz_encode.empty()) {
+      InitTokenizer12hzEncode(config_.qwen3.tokenizer12hz_encode);
     }
 
     InitTokenizer12hzDecode(config_.qwen3.tokenizer12hz_decode);
@@ -363,6 +385,14 @@ class OfflineTtsQwen3Model::Impl {
                 speaker_encoder_output_names_ptr_);
   }
 
+  void InitTokenizer12hzEncode(const std::string &path) {
+    InitSession(path, tokenizer12hz_encode_sess_,
+                tokenizer12hz_encode_input_names_,
+                tokenizer12hz_encode_input_names_ptr_,
+                tokenizer12hz_encode_output_names_,
+                tokenizer12hz_encode_output_names_ptr_);
+  }
+
   void InitTokenizer12hzDecode(const std::string &path) {
     InitSession(path, tokenizer12hz_decode_sess_,
                 tokenizer12hz_decode_input_names_,
@@ -386,7 +416,7 @@ class OfflineTtsQwen3Model::Impl {
   Ort::SessionOptions sess_opts_;
   Ort::AllocatorWithDefaultOptions allocator_;
 
-  // ONNX sessions (speaker_encoder is optional)
+  // ONNX sessions (speaker_encoder and tokenizer12hz_encode are optional)
   std::unique_ptr<Ort::Session> text_project_sess_;
   std::unique_ptr<Ort::Session> codec_embed_sess_;
   std::unique_ptr<Ort::Session> code_predictor_embed_sess_;
@@ -394,6 +424,7 @@ class OfflineTtsQwen3Model::Impl {
   std::unique_ptr<Ort::Session> talker_prefill_sess_;
   std::unique_ptr<Ort::Session> talker_decode_sess_;
   std::unique_ptr<Ort::Session> speaker_encoder_sess_;
+  std::unique_ptr<Ort::Session> tokenizer12hz_encode_sess_;
   std::unique_ptr<Ort::Session> tokenizer12hz_decode_sess_;
   // Optional streaming decoder (small-N trace for low-latency chunk decode)
   std::unique_ptr<Ort::Session> tokenizer12hz_decode_stream_sess_;
@@ -433,6 +464,11 @@ class OfflineTtsQwen3Model::Impl {
   std::vector<const char *> speaker_encoder_input_names_ptr_;
   std::vector<std::string> speaker_encoder_output_names_;
   std::vector<const char *> speaker_encoder_output_names_ptr_;
+
+  std::vector<std::string> tokenizer12hz_encode_input_names_;
+  std::vector<const char *> tokenizer12hz_encode_input_names_ptr_;
+  std::vector<std::string> tokenizer12hz_encode_output_names_;
+  std::vector<const char *> tokenizer12hz_encode_output_names_ptr_;
 
   std::vector<std::string> tokenizer12hz_decode_input_names_;
   std::vector<const char *> tokenizer12hz_decode_input_names_ptr_;
@@ -501,6 +537,12 @@ Ort::Value OfflineTtsQwen3Model::RunSpeakerEncoder(Ort::Value mels) const {
   return impl_->RunSpeakerEncoder(std::move(mels));
 }
 
+Ort::Value OfflineTtsQwen3Model::RunTokenizer12hzEncode(
+    Ort::Value audio, Ort::Value padding_mask) const {
+  return impl_->RunTokenizer12hzEncode(std::move(audio),
+                                       std::move(padding_mask));
+}
+
 OfflineTtsQwen3Model::Tokenizer12hzDecodeResult
 OfflineTtsQwen3Model::RunTokenizer12hzDecode(
     Ort::Value audio_codes) const {
@@ -511,6 +553,14 @@ OfflineTtsQwen3Model::Tokenizer12hzDecodeResult
 OfflineTtsQwen3Model::RunTokenizer12hzDecodeStream(
     Ort::Value audio_codes) const {
   return impl_->RunTokenizer12hzDecodeStream(std::move(audio_codes));
+}
+
+bool OfflineTtsQwen3Model::HasSpeakerEncoder() const {
+  return impl_->HasSpeakerEncoder();
+}
+
+bool OfflineTtsQwen3Model::HasTokenizer12hzEncode() const {
+  return impl_->HasTokenizer12hzEncode();
 }
 
 bool OfflineTtsQwen3Model::HasTokenizer12hzDecodeStream() const {

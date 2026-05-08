@@ -54,6 +54,11 @@ or details.
       "reference-audio", &reference_audio,
       "Path to reference audio if you are using a TTS model supporting that");
 
+  std::string reference_text;
+  po.Register(
+      "reference-text", &reference_text,
+      "Reference text transcript for voice clone (ICL mode). If empty, x-vector only mode is used.");
+
   sherpa_onnx::GenerationConfig gen_config;
 
   std::string lang;
@@ -135,24 +140,27 @@ or details.
       }
     }
 
-    // Set reference audio for PocketTTS
-    if (is_pocket_tts) {
-      if (reference_audio.empty()) {
+    // Set reference audio for PocketTTS or Qwen3 voice clone
+    if (is_pocket_tts || is_qwen3_tts) {
+      if (!reference_audio.empty()) {
+        int32_t sample_rate;
+        bool is_ok = false;
+        auto samples =
+            sherpa_onnx::ReadWave(reference_audio, &sample_rate, &is_ok);
+        if (!is_ok) {
+          fprintf(stderr, "Failed to read '%s'", reference_audio.c_str());
+          exit(EXIT_FAILURE);
+        }
+
+        gen_config.reference_audio = std::move(samples);
+        gen_config.reference_sample_rate = sample_rate;
+        gen_config.reference_text = reference_text;
+      }
+
+      if (is_pocket_tts && reference_audio.empty()) {
         fprintf(stderr, "You need to provide --reference-audio for Pocket TTS");
         exit(EXIT_FAILURE);
       }
-
-      int32_t sample_rate;
-      bool is_ok = false;
-      auto samples =
-          sherpa_onnx::ReadWave(reference_audio, &sample_rate, &is_ok);
-      if (!is_ok) {
-        fprintf(stderr, "Failed to read '%s'", reference_audio.c_str());
-        exit(EXIT_FAILURE);
-      }
-
-      gen_config.reference_audio = std::move(samples);
-      gen_config.reference_sample_rate = sample_rate;
     }
 
     audio = tts.Generate(po.GetArg(1), gen_config, AudioCallback);
